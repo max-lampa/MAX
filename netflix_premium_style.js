@@ -1,1351 +1,1653 @@
 (function () {
     'use strict';
 
-    /* ============================================================
-     * NETFLIX PREMIUM STYLE v5.1
-     * Cinematic Red Accent, Smooth Rows, Movie Logo Headers
-     * ============================================================ */
+    var isExoticOS = /Vidaa|Web0S|Tizen|SmartTV|Metrological|NetCast/i.test(navigator.userAgent);
 
-    /* ------------------------------------------------------------------
-     * QUICK NAVIGATION (швидкий пошук по файлу)
-     * 1) UTILS + SETTINGS                  -> getBool / settings
-     * 2) MENU HELPERS                      -> ensureMenuSubsectionsVisible
-     * 3) LOGO PIPELINE (TMDB + fallback)   -> resolveLogoViaTmdb / applyFullCardLogo
-     * 4) CARDS + SCROLL                    -> processCard / enableSmoothRowScroll
-     * 5) DOM OBSERVER                      -> scanNode / startObserver
-     * 6) CSS THEME (CUSTOMIZE)             -> injectStyles
-     * 7) SETTINGS UI + INIT                -> initSettingsUI / init
+    /* ================================================================
+     *  Netflix Premium Style v8.0  —  Multi-screen, Custom UI
      *
-     * Шукати по тегам:
-     * - "CUSTOMIZE"      : точки для швидкого кастому
-     * - "BLOCK:"         : великі логічні блоки
-     * - "SAFEGUARD:"     : місця із захистом від дублю/гонок
-     * ------------------------------------------------------------------ */
+     *  ✦ Logo Engine    → Lampa.TMDB.api() + Lampa.TMDB.key()
+     *  ✦ Hero           → Clean backdrop, NO gradients, text-shadow only
+     *  ✦ Sidebar        → Glassy blur, red left-border active item
+     *  ✦ Cards          → No ghost masks, clean box-shadow, multi-scale
+     *  ✦ GPU            → translate3d / scale3d everywhere (60fps optimized)
+     *  ✦ Multi-screen   → Native support for Phones, Tablets, TVs, and 4K
+     * ================================================================ */
 
-    /* BLOCK: Utils */
-    function getBool(key, def) {
-        var v = Lampa.Storage.get(key, def);
-        if (typeof v === 'string') v = v.trim().toLowerCase();
-        return v === true || v === 'true' || v === 1 || v === '1';
+    // ─────────────────────────────────────────────────────────────────
+    //  SECTION 1 — ANIMATION HELPERS  (from logo.js reference)
+    // ─────────────────────────────────────────────────────────────────
+
+    var FADE_OUT_TEXT = 300;
+    var MORPH_HEIGHT = 400;
+    var FADE_IN_IMG = 400;
+    var SAFE_DELAY = 200;
+
+    function animateHeight(element, start, end, duration, callback) {
+        var startTime = null;
+        function step(timestamp) {
+            if (!startTime) startTime = timestamp;
+            var progress = timestamp - startTime;
+            var percent = Math.min(progress / duration, 1);
+            var ease = 1 - Math.pow(1 - percent, 3);
+            element.style.height = (start + (end - start) * ease) + 'px';
+            if (progress < duration) {
+                requestAnimationFrame(step);
+            } else {
+                if (callback) callback();
+            }
+        }
+        requestAnimationFrame(step);
     }
 
-    function clamp(num, min, max) {
-        return Math.max(min, Math.min(max, num));
+    function animateOpacity(element, start, end, duration, callback) {
+        var startTime = null;
+        function step(timestamp) {
+            if (!startTime) startTime = timestamp;
+            var progress = timestamp - startTime;
+            var percent = Math.min(progress / duration, 1);
+            var ease = 1 - Math.pow(1 - percent, 3);
+            element.style.opacity = start + (end - start) * ease;
+            if (progress < duration) {
+                requestAnimationFrame(step);
+            } else {
+                if (callback) callback();
+            }
+        }
+        requestAnimationFrame(step);
     }
 
-    function escapeSvgText(text) {
-        return String(text || '')
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&apos;');
-    }
 
-    function cleanTitle(text) {
-        return String(text || '')
-            .replace(/\s+/g, ' ')
-            .trim();
-    }
+    // ─────────────────────────────────────────────────────────────────
+    //  SECTION 2 — LOGO ENGINE  (NO hardcoded API keys)
+    // ─────────────────────────────────────────────────────────────────
 
-    /* 1. LOCALIZATION */
-    Lampa.Lang.add({
-        netflix_premium_title: { en: 'Netflix Premium Style', uk: 'Netflix Преміум Стиль' },
-        netflix_enable: { en: 'Enable Netflix Premium style', uk: 'Увімкнути Netflix Преміум стиль' },
-        netflix_use_backdrops: { en: 'Use backdrops (landscape)', uk: 'Використовувати backdrops (горизонтальні)' },
-        netflix_show_logos: { en: 'Replace full-card title with logo', uk: 'Заміняти заголовок картки на лого' },
-        netflix_smooth_scroll: { en: 'Extra smooth row scrolling', uk: 'Дуже плавний скрол рядів' },
-        netflix_round_corners: { en: 'Rounded corners', uk: 'Заокруглені кути' },
-        netflix_card_height: { en: 'Card height', uk: 'Висота карток' }
-    });
+    var LogoEngine = {
+        _cachePrefix: 'nfx_logo_v7_',
 
-    /* 2. SETTINGS */
-    /* CUSTOMIZE: дефолтні опції плагіна */
-    var settings = {
-        enabled: getBool('netflix_premium_enabled', true),
-        useBackdrops: getBool('netflix_use_backdrops', true),
-        showLogos: getBool('netflix_show_logos', true),
-        smoothScroll: getBool('netflix_smooth_scroll', true),
-        roundCorners: getBool('netflix_round_corners', true),
-        cardHeight: Lampa.Storage.get('netflix_card_height', 'medium')
+        _key: function (type, id, lang) {
+            return this._cachePrefix + type + '_' + id + '_' + lang;
+        },
+
+        _getCached: function (key) {
+            try {
+                var s = sessionStorage.getItem(key);
+                if (s) return s;
+            } catch (e) { /* ignore */ }
+            return Lampa.Storage.get(key, null);
+        },
+
+        _setCached: function (key, value) {
+            var v = value || 'none';
+            try { sessionStorage.setItem(key, v); } catch (e) { /* ignore */ }
+            Lampa.Storage.set(key, v);
+        },
+
+        /**
+         * Pick best logo: target_lang PNG → en PNG → any first.
+         * SVGs converted to PNG via extension swap.
+         */
+        _pickBest: function (logos, targetLang) {
+            if (!logos || !logos.length) return null;
+
+            var sorted = logos.slice().sort(function (a, b) {
+                var aS = (a.file_path || '').toLowerCase().endsWith('.svg');
+                var bS = (b.file_path || '').toLowerCase().endsWith('.svg');
+                return aS === bS ? 0 : (aS ? 1 : -1);
+            });
+
+            // 1. Direct match
+            for (var i = 0; i < sorted.length; i++) {
+                if (sorted[i].iso_639_1 === targetLang && sorted[i].file_path) return sorted[i].file_path;
+            }
+
+            // 2. Ukrainian Fallback -> Russian
+            if (targetLang === 'uk' || targetLang === 'ua') {
+                for (var r = 0; r < sorted.length; r++) {
+                    if (sorted[r].iso_639_1 === 'ru' && sorted[r].file_path) return sorted[r].file_path;
+                }
+            }
+
+            // 3. Fallback -> English
+            for (var j = 0; j < sorted.length; j++) {
+                if (sorted[j].iso_639_1 === 'en' && sorted[j].file_path) return sorted[j].file_path;
+            }
+
+            // 4. Any
+            return sorted[0] && sorted[0].file_path ? sorted[0].file_path : null;
+        },
+
+        _getLang: function () {
+            var manual = Lampa.Storage.get('nfx_logo_lang', 'auto');
+            if (manual && manual !== 'auto') return manual;
+            var u = Lampa.Storage.get('logo_lang', '');
+            return u || Lampa.Storage.get('language', 'uk') || 'uk';
+        },
+
+        /**
+         * Resolve logo — uses Lampa.TMDB.api() + Lampa.TMDB.key()
+         */
+        resolve: function (movie, done) {
+            if (!movie || !movie.id) { done(null); return; }
+
+            var type = movie.name ? 'tv' : 'movie';
+            var lang = this._getLang();
+            var cacheKey = this._key(type, movie.id, lang);
+
+            var cached = this._getCached(cacheKey);
+            if (cached === 'none') { done(null); return; }
+            if (cached) { done(cached); return; }
+
+            var url = Lampa.TMDB.api(
+                type + '/' + movie.id + '/images?api_key=' + Lampa.TMDB.key() +
+                '&include_image_language=' + lang + ',ru,en,null'
+            );
+
+            var self = this;
+            var size = Lampa.Storage.get('logo_size', 'original') || 'original';
+
+            $.get(url, function (data_api) {
+                var path = self._pickBest(data_api.logos, lang);
+                if (path) {
+                    var imgUrl = Lampa.TMDB.image('/t/p/' + size + path.replace('.svg', '.png'));
+                    self._setCached(cacheKey, imgUrl);
+                    done(imgUrl);
+                } else {
+                    self._setCached(cacheKey, 'none');
+                    done(null);
+                }
+            }).fail(function () {
+                done(null);
+            });
+        }
     };
 
-    /* BLOCK: Runtime state (службові змінні сесії) */
-    var rowScrollState = new WeakMap(); // Пер-ряд стан плавного скролу
-    var domObserver = null;             // Один глобальний MutationObserver
-    var lastFullMovie = null;           // Останній movie з full-екрана
-    var lastFullMovieKey = '';          // SAFEGUARD: для асинхронного logo-апдейту
-    var DISABLE_LOGO_CACHE = false;     // CUSTOMIZE: true = відключити cache логотипів
-    var logoRequests = {};              // SAFEGUARD: дедуп паралельних TMDB запитів
 
-    /* BLOCK: Selectors / Fallback dictionaries */
-    /* CUSTOMIZE: якщо в іншій темі назви меню мають інші класи, додайте їх сюди */
-    var MENU_TEXT_SELECTORS = '.menu__item-name, .menu__item-text, .menu__item-title, .menu__item-label, .menu__item-value';
-    var SECTION_TITLE_SELECTORS = '.scroll__title, .category-title';
-    /* CUSTOMIZE: словник fallback-лейблів для пунктів меню без нормального тексту */
-    var MENU_FALLBACK_LABELS = [
-        { match: 'watching', label: 'Дивляться' },
-        { match: 'watch', label: 'Дивляться' },
-        { match: 'popular', label: 'Популярно' },
-        { match: 'trend', label: 'Тренди' },
-        { match: 'recommend', label: 'Рекомендовано' },
-        { match: 'recomend', label: 'Рекомендовано' },
-        { match: 'movie', label: 'Фільми' },
-        { match: 'film', label: 'Фільми' },
-        { match: 'serial', label: 'Серіали' },
-        { match: 'show', label: 'Серіали' },
-        { match: 'tv', label: 'Серіали' },
-        { match: 'anime', label: 'Аніме' },
-        { match: 'new', label: 'Новинки' },
-        { match: 'top', label: 'Топ' },
-        { match: 'history', label: 'Історія' },
-        { match: 'favorite', label: 'Обране' },
-        { match: 'bookmarks', label: 'Закладки' }
-    ];
+    // ─────────────────────────────────────────────────────────────────
+    //  SECTION 3 — HERO PROCESSOR  (logo animation on full card page)
+    // ─────────────────────────────────────────────────────────────────
 
-    /* BLOCK: Card/movie data normalization */
-    function getCardData(card) {
-        return card.card_data ||
-            card.data ||
-            card.movie ||
-            card._data ||
-            (card.onnoderemove && card.onnoderemove.data) ||
-            null;
+    function applyLogoStyles(img) {
+        var logoH = Lampa.Storage.get('nfx_logo_height', '200px');
+        img.style.display = 'block';
+        img.style.maxWidth = '100%';
+        img.style.maxHeight = logoH;
+        img.style.width = 'auto';
+        img.style.height = 'auto';
+        img.style.objectFit = 'contain';
+        img.style.objectPosition = 'left bottom';
+        img.style.boxSizing = 'border-box';
+        img.style.paddingBottom = '0.2em';
+        img.style.filter = 'drop-shadow(0 4px 20px rgba(0,0,0,0.85))';
     }
 
-    function getMovieTitle(movie, fallback) {
-        return cleanTitle(
-            (movie && (movie.title || movie.name || movie.original_title || movie.original_name)) ||
-            fallback ||
-            ''
-        );
-    }
-
-    function getMovieType(movie) {
-        return movie && movie.name ? 'tv' : 'movie';
-    }
-
-    /* SAFEGUARD: унікальний ключ для синхронізації async-лого */
-    function getMovieKey(movie) {
-        if (!movie || !movie.id) return '';
-        return getMovieType(movie) + ':' + movie.id;
-    }
-
-    /* BLOCK: TMDB logo request helpers */
-    function getLogoCacheKey(type, id, lang) {
-        return 'logo_cache_width_based_v1_' + type + '_' + id + '_' + lang;
-    }
-
-    function getTargetLogoLanguage() {
-        var userLang = Lampa.Storage.get('logo_lang', '');
-        return userLang || Lampa.Storage.get('language', 'en') || 'en';
-    }
-
-    function getTargetLogoSize() {
-        return Lampa.Storage.get('logo_size', 'original') || 'original';
-    }
-
-    function pickLogoPath(dataApi, targetLang) {
-        if (!dataApi || !Array.isArray(dataApi.logos) || !dataApi.logos.length) return '';
-
-        var logos = dataApi.logos;
-        for (var i = 0; i < logos.length; i++) {
-            if (logos[i] && logos[i].iso_639_1 === targetLang && logos[i].file_path) return logos[i].file_path;
-        }
-
-        for (var j = 0; j < logos.length; j++) {
-            if (logos[j] && logos[j].iso_639_1 === 'en' && logos[j].file_path) return logos[j].file_path;
-        }
-
-        return logos[0] && logos[0].file_path ? logos[0].file_path : '';
-    }
-
-    function flushLogoQueue(queueKey, url) {
-        var queue = logoRequests[queueKey] || [];
-        delete logoRequests[queueKey];
-        for (var i = 0; i < queue.length; i++) queue[i](url || '');
-    }
-
-    /* BLOCK: TMDB logo resolver
-     * 1) читає кеш
-     * 2) дедупає одночасні запити
-     * 3) тягне /images і повертає готовий URL logo
+    /**
+     * Smooth logo animation (logo.js pattern):
+     *  1. Fade out text  2. Replace with <img>  3. Morph height  4. Fade in logo
      */
-    function resolveLogoViaTmdb(movie, done) {
-        if (!movie || !movie.id || !Lampa.TMDB || typeof $ === 'undefined' || typeof $.get !== 'function') {
-            done('');
-            return;
-        }
+    function startLogoAnimation(imgUrl, titleElem, domTitle) {
+        var img = new Image();
+        img.src = imgUrl;
 
-        var type = getMovieType(movie);
-        var lang = getTargetLogoLanguage();
-        var size = getTargetLogoSize();
-        var cacheKey = getLogoCacheKey(type, movie.id, lang);
-        var requestKey = cacheKey + '::' + size;
+        var startTextHeight = 0;
+        if (domTitle) startTextHeight = domTitle.getBoundingClientRect().height;
 
-        if (!DISABLE_LOGO_CACHE) {
-            var cachedUrl = Lampa.Storage.get(cacheKey);
-            if (cachedUrl && cachedUrl !== 'none') {
-                done(cachedUrl);
-                return;
-            }
-            if (cachedUrl === 'none') {
-                done('');
-                return;
-            }
-        }
+        applyLogoStyles(img);
+        img.style.opacity = '0';
 
-        if (logoRequests[requestKey]) {
-            logoRequests[requestKey].push(done);
-            return;
-        }
+        img.onload = function () {
+            setTimeout(function () {
+                if (domTitle) startTextHeight = domTitle.getBoundingClientRect().height;
 
-        logoRequests[requestKey] = [done];
-
-        var url = Lampa.TMDB.api(
-            type + '/' + movie.id + '/images?api_key=' + Lampa.TMDB.key() + '&include_image_language=' + lang + ',en,null'
-        );
-
-        $.get(url, function (dataApi) {
-            var finalLogo = pickLogoPath(dataApi, lang);
-            if (!finalLogo) {
-                if (!DISABLE_LOGO_CACHE) Lampa.Storage.set(cacheKey, 'none');
-                flushLogoQueue(requestKey, '');
-                return;
-            }
-
-            var imgUrl = Lampa.TMDB.image('/t/p/' + size + finalLogo.replace('.svg', '.png'));
-            if (!DISABLE_LOGO_CACHE) Lampa.Storage.set(cacheKey, imgUrl);
-            flushLogoQueue(requestKey, imgUrl);
-        }).fail(function () {
-            flushLogoQueue(requestKey, '');
-        });
-    }
-
-    /* BLOCK: Menu label cleanup */
-    function resolveMenuFallbackLabel(rawValue) {
-        var raw = cleanTitle(rawValue || '');
-        if (!raw) return '';
-
-        var lower = raw.toLowerCase();
-        for (var i = 0; i < MENU_FALLBACK_LABELS.length; i++) {
-            if (lower.indexOf(MENU_FALLBACK_LABELS[i].match) !== -1) return MENU_FALLBACK_LABELS[i].label;
-        }
-
-        return raw;
-    }
-
-    function getMenuLabelScore(text) {
-        /* Кращий score -> більша ймовірність, що це основний людський лейбл */
-        var score = (text || '').length;
-        if (/[А-Яа-яЁёЇїІіЄєҐґ]/.test(text)) score += 100;
-        if (/^[a-z0-9_-]+$/i.test(text)) score -= 20;
-        return score;
-    }
-
-    /* SAFEGUARD: прибирає "Головна main" / "Серіали serial" і дубльовані хвости */
-    function cleanMenuPrimaryLabel(text) {
-        var out = cleanTitle(text || '');
-        if (!out) return '';
-
-        var dup = out.match(/^(.+?)\s+\1$/i);
-        if (dup && dup[1]) out = cleanTitle(dup[1]);
-
-        var tail = out.match(/^(.*)\s+([a-z][a-z0-9_-]{1,20})$/i);
-        if (tail && tail[1] && /[А-Яа-яЁёЇїІіЄєҐґ]/.test(tail[1])) out = cleanTitle(tail[1]);
-
-        return out;
-    }
-
-    function ensureMenuPrimaryLabelNode(item) {
-        var label = item.querySelector('.nfx-menu-primary-label');
-        if (!label) {
-            label = document.createElement('span');
-            label.className = 'nfx-menu-primary-label';
-            item.appendChild(label);
-        }
-        return label;
-    }
-
-    /* BLOCK: Section title placement (завжди над рядом карток) */
-    function isSectionTitleElement(node) {
-        if (!node || !node.classList) return false;
-        return node.classList.contains('scroll__title') || node.classList.contains('category-title');
-    }
-
-    function getFirstDirectSectionTitle(parent) {
-        if (!parent || !parent.children) return null;
-        for (var i = 0; i < parent.children.length; i++) {
-            if (isSectionTitleElement(parent.children[i])) return parent.children[i];
-        }
-        return null;
-    }
-
-    function ensureSectionTitlesAboveCards(root) {
-        var scope = root && root.querySelectorAll ? root : document;
-        var lines = [];
-
-        if (scope.classList && scope.classList.contains('items-line')) lines = [scope];
-        else lines = scope.querySelectorAll('.items-line');
-
-        for (var i = 0; i < lines.length; i++) {
-            var line = lines[i];
-            var parent = line.parentElement;
-            if (!parent) continue;
-
-            var prev = line.previousElementSibling;
-            var next = line.nextElementSibling;
-            var title = null;
-
-            if (isSectionTitleElement(prev)) title = prev;
-            else if (isSectionTitleElement(next)) title = next;
-            else title = getFirstDirectSectionTitle(parent);
-
-            if (!title) continue;
-
-            if (title !== line.previousElementSibling) parent.insertBefore(title, line);
-            parent.classList.add('nfx-section-wrap');
-            title.classList.add('nfx-section-title');
-        }
-    }
-
-    /* BLOCK: Menu normalization
-     * Залишає один primary label на пункт меню, інше ховає.
-     */
-    function ensureMenuSubsectionsVisible(root) {
-        var scope = root && root.querySelectorAll ? root : document;
-        var items = [];
-
-        if (scope.classList && scope.classList.contains('menu__item')) items = [scope];
-        else items = scope.querySelectorAll('.menu__item');
-
-        for (var i = 0; i < items.length; i++) {
-            var item = items[i];
-            if (!item || !item.classList) continue;
-
-            item.classList.add('nfx-menu-item');
-            var legacySub = item.querySelector('.nfx-menu-subsection');
-            if (legacySub) legacySub.remove();
-
-            var textNodes = item.querySelectorAll(MENU_TEXT_SELECTORS);
-            var entries = [];
-
-            for (var j = 0; j < textNodes.length; j++) {
-                var text = cleanTitle(textNodes[j].textContent || '');
-                textNodes[j].classList.remove('nfx-menu-primary', 'nfx-menu-secondary');
-                if (!text) {
-                    textNodes[j].classList.add('nfx-menu-secondary');
-                    textNodes[j].style.display = 'none';
-                    textNodes[j].style.opacity = '0';
-                    textNodes[j].style.visibility = 'hidden';
-                    textNodes[j].style.width = '0';
-                    textNodes[j].style.maxWidth = '0';
-                    continue;
-                }
-
-                var nodeScore = getMenuLabelScore(text);
-                /* SAFEGUARD: menu__item-value зазвичай технічне поле (slug/alias). */
-                if (textNodes[j].classList.contains('menu__item-value')) nodeScore -= 260;
-                /* CUSTOMIZE: вага полів пріоритету при виборі primary label */
-                if (textNodes[j].classList.contains('menu__item-name')) nodeScore += 70;
-                if (textNodes[j].classList.contains('menu__item-text')) nodeScore += 45;
-                if (textNodes[j].classList.contains('menu__item-title')) nodeScore += 35;
-
-                entries.push({
-                    node: textNodes[j],
-                    text: text,
-                    score: nodeScore
+                // 1) Fade out
+                titleElem.css({
+                    transition: 'opacity ' + (FADE_OUT_TEXT / 1000) + 's ease',
+                    opacity: '0'
                 });
-            }
 
-            if (entries.length) {
-                var primary = entries[0];
-                for (var k = 1; k < entries.length; k++) {
-                    if (entries[k].score > primary.score) primary = entries[k];
-                }
+                setTimeout(function () {
+                    // 2) Replace
+                    titleElem.empty().append(img);
+                    titleElem.css({ opacity: '1', transition: 'none' });
 
-                for (var z = 0; z < entries.length; z++) {
-                    var node = entries[z].node;
-                    var isPrimary = node === primary.node;
-                    node.classList.add(isPrimary ? 'nfx-menu-primary' : 'nfx-menu-secondary');
-                    node.style.display = isPrimary ? 'block' : 'none';
-                    node.style.opacity = isPrimary ? '1' : '0';
-                    node.style.visibility = isPrimary ? 'visible' : 'hidden';
-                    node.style.width = isPrimary ? 'auto' : '0';
-                    node.style.maxWidth = isPrimary ? 'none' : '0';
-                }
+                    var targetHeight = domTitle.getBoundingClientRect().height;
 
-                var primaryText = cleanMenuPrimaryLabel(primary.text);
-                var primaryNode = ensureMenuPrimaryLabelNode(item);
-                primaryNode.textContent = primaryText || resolveMenuFallbackLabel(primary.text);
+                    domTitle.style.height = startTextHeight + 'px';
+                    domTitle.style.display = 'block';
+                    domTitle.style.overflow = 'hidden';
+                    domTitle.style.boxSizing = 'border-box';
 
-                continue;
-            }
+                    void domTitle.offsetHeight;
 
-            var hint =
-                item.getAttribute('data-title') ||
-                item.getAttribute('data-name') ||
-                item.getAttribute('data-action') ||
-                item.getAttribute('title') ||
-                (item.dataset ? (item.dataset.title || item.dataset.name || item.dataset.action || item.dataset.route) : '') ||
-                '';
+                    // 3) Morph
+                    domTitle.style.transition = 'height ' + (MORPH_HEIGHT / 1000) + 's cubic-bezier(0.4, 0, 0.2, 1)';
 
-            var label = resolveMenuFallbackLabel(hint);
-            if (!label) {
-                var stale = item.querySelector('.nfx-menu-primary-label');
-                if (stale) stale.remove();
-                continue;
-            }
+                    requestAnimationFrame(function () {
+                        domTitle.style.height = targetHeight + 'px';
 
-            var injected = ensureMenuPrimaryLabelNode(item);
-            injected.textContent = label;
-        }
-    }
+                        // 4) Fade in
+                        setTimeout(function () {
+                            img.style.transition = 'opacity ' + (FADE_IN_IMG / 1000) + 's ease';
+                            img.style.opacity = '1';
+                        }, Math.max(0, MORPH_HEIGHT - 100));
 
-    /* BLOCK: Logo source resolver (supports direct URL, relative path, nested objects) */
-    function normalizeLogoCandidate(value) {
-        if (!value) return '';
+                        // Cleanup
+                        setTimeout(function () {
+                            domTitle.style.height = '';
+                            domTitle.style.overflow = '';
+                            domTitle.style.transition = 'none';
+                            applyLogoStyles(img);
+                        }, MORPH_HEIGHT + FADE_IN_IMG + 50);
+                    });
+                }, FADE_OUT_TEXT);
 
-        if (typeof value === 'object') {
-            value = value.url || value.file_path || value.logo || value.path || '';
-        }
-
-        if (!value || typeof value !== 'string') return '';
-
-        if (value.indexOf('data:image') === 0) return value;
-        if (value.indexOf('http://') === 0 || value.indexOf('https://') === 0) return value;
-        if (value.charAt(0) === '/') return 'https://image.tmdb.org/t/p/w500' + value;
-        return '';
-    }
-
-    /* BLOCK: Read logo from movie payload before requesting TMDB */
-    function getMovieLogoUrl(movie) {
-        if (!movie || typeof movie !== 'object') return '';
-
-        var direct = [
-            movie.logo,
-            movie.logo_path,
-            movie.clearlogo,
-            movie.clear_logo,
-            movie.img_logo,
-            movie.image_logo
-        ];
-
-        for (var i = 0; i < direct.length; i++) {
-            var found = normalizeLogoCandidate(direct[i]);
-            if (found) return found;
-        }
-
-        var nested = [];
-        if (movie.images) {
-            nested.push(movie.images.logo, movie.images.clearlogo, movie.images.clear_logo);
-            if (Array.isArray(movie.images.logos) && movie.images.logos.length) nested.push(movie.images.logos[0]);
-        }
-        if (Array.isArray(movie.logos) && movie.logos.length) nested.push(movie.logos[0]);
-
-        for (var j = 0; j < nested.length; j++) {
-            var nestedFound = normalizeLogoCandidate(nested[j]);
-            if (nestedFound) return nestedFound;
-        }
-
-        return '';
-    }
-
-    /* BLOCK: Fallback logo generator (SVG based on title text) */
-    function buildTextLogoDataUrl(title) {
-        var source = cleanTitle(title || 'Movie');
-        var text = escapeSvgText(source.length > 40 ? source.slice(0, 40).trim() + '...' : source);
-        var fontSize = source.length > 24 ? 76 : 92;
-
-        var svg =
-            '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1400 320">' +
-                '<defs>' +
-                    '<linearGradient id="nfxg" x1="0" y1="0" x2="1" y2="0">' +
-                        '<stop offset="0%" stop-color="#ffffff"/>' +
-                        '<stop offset="100%" stop-color="#f3f3f3"/>' +
-                    '</linearGradient>' +
-                '</defs>' +
-                '<rect width="100%" height="100%" fill="transparent"/>' +
-                '<g transform="skewX(-7) translate(40 0)">' +
-                    '<text x="700" y="214" text-anchor="middle" ' +
-                        'font-family="Arial Black,Helvetica,sans-serif" font-size="' + fontSize + '" ' +
-                        'font-weight="900" letter-spacing="2" fill="#91070f" opacity="0.72">' + text + '</text>' +
-                    '<text x="700" y="200" text-anchor="middle" ' +
-                        'font-family="Arial Black,Helvetica,sans-serif" font-size="' + fontSize + '" ' +
-                        'font-weight="900" letter-spacing="2" fill="url(#nfxg)">' + text + '</text>' +
-                '</g>' +
-            '</svg>';
-
-        return 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svg);
-    }
-
-    /* BLOCK: Replace poster with backdrop in card rows */
-    function applyBackdrop(card, data) {
-        if (!settings.useBackdrops || !data || !data.backdrop_path) return;
-
-        var img = card.querySelector('.card__img');
-        if (!img) return;
-
-        var backdropUrl = 'https://image.tmdb.org/t/p/w780' + data.backdrop_path;
-        if (img.dataset.nfxBackdropUrl === backdropUrl) return;
-
-        var preload = new Image();
-        preload.onload = function () {
-            img.src = backdropUrl;
-            img.dataset.nfxBackdropUrl = backdropUrl;
-            card.classList.add('card--has-backdrop');
-        };
-        preload.onerror = function () {
-            card.classList.remove('card--has-backdrop');
-        };
-        preload.src = backdropUrl;
-    }
-
-    /* BLOCK: Idempotent card processing (safe for repeated observer runs) */
-    function processCard(card) {
-        if (!settings.enabled) return;
-        if (!card || !card.classList || !card.classList.contains('card')) return;
-        if (card.dataset.nfxProcessed === 'true') return;
-
-        var data = getCardData(card);
-        applyBackdrop(card, data);
-        card.dataset.nfxProcessed = 'true';
-    }
-
-    /* BLOCK: Smooth row animation frame loop */
-    function animateLineScroll(line, state) {
-        state.current += (state.target - state.current) * 0.18;
-        line.scrollLeft = state.current;
-
-        if (Math.abs(state.target - state.current) < 0.5) {
-            line.scrollLeft = state.target;
-            state.current = state.target;
-            state.raf = 0;
-            return;
-        }
-
-        state.raf = requestAnimationFrame(function () {
-            animateLineScroll(line, state);
-        });
-    }
-
-    /* BLOCK: Wheel -> horizontal smooth scroll for .items-line */
-    function enableSmoothRowScroll(line) {
-        if (!line || !line.classList || !line.classList.contains('items-line')) return;
-        if (line.dataset.nfxSmoothBound === 'true') return;
-
-        line.dataset.nfxSmoothBound = 'true';
-        var state = {
-            target: line.scrollLeft || 0,
-            current: line.scrollLeft || 0,
-            raf: 0
+            }, SAFE_DELAY);
         };
 
-        rowScrollState.set(line, state);
-
-        line.addEventListener('wheel', function (event) {
-            if (!settings.enabled || !settings.smoothScroll) return;
-
-            var maxScroll = Math.max(0, line.scrollWidth - line.clientWidth);
-            if (!maxScroll) return;
-
-            var mostlyVertical = Math.abs(event.deltaY) >= Math.abs(event.deltaX);
-            if (!mostlyVertical) return;
-
-            event.preventDefault();
-            var delta = (event.deltaY + event.deltaX) * 0.95;
-
-            state.target = clamp(state.target + delta, 0, maxScroll);
-            if (!state.raf) {
-                state.raf = requestAnimationFrame(function () {
-                    animateLineScroll(line, state);
-                });
-            }
-        }, { passive: false });
+        img.onerror = function () {
+            titleElem.css({ opacity: '1', transition: 'none' });
+        };
     }
 
-    /* BLOCK: Full page title -> logo transform */
-    function applyFullCardLogo(movie) {
-        if (!settings.enabled) return;
+    function buildMeta(movie) {
+        var parts = [];
+        parts.push(movie.name ? 'Серіал' : 'Фільм');
+        if (movie.genres && movie.genres.length) {
+            for (var i = 0; i < Math.min(movie.genres.length, 3); i++) {
+                if (movie.genres[i].name) parts.push(movie.genres[i].name);
+            }
+        }
+        var year = '';
+        if (movie.release_date) year = movie.release_date.substring(0, 4);
+        else if (movie.first_air_date) year = movie.first_air_date.substring(0, 4);
+        if (year) parts.push(year);
+        return parts.join(' · ');
+    }
 
-        var titleNodes = document.querySelectorAll('.full-start-new__title, .full-start__title');
-        if (!titleNodes.length) return;
+    function initHeroProcessor() {
+        if (window.__nfx_hero_bound) return;
+        window.__nfx_hero_bound = true;
 
-        var movieKey = getMovieKey(movie);
-        if (movieKey) lastFullMovieKey = movieKey;
-        var directLogoUrl = getMovieLogoUrl(movie);
-        var shouldFetchTmdbLogo = settings.showLogos && !directLogoUrl;
-        var pendingTitles = [];
+        Lampa.Listener.follow('full', function (e) {
+            if (e.type !== 'complite') return;
 
-        for (var i = 0; i < titleNodes.length; i++) {
-            var titleEl = titleNodes[i];
-            if (!titleEl || !titleEl.classList) continue;
+            var movie = e.data.movie;
+            var type = movie.name ? 'tv' : 'movie';
+            var render = e.object.activity.render();
+            var titleElem = render.find('.full-start-new__title');
+            var domTitle = titleElem[0];
 
-            if (!settings.showLogos) {
-                restoreOriginalTitle(titleEl);
-                continue;
+            if (!titleElem.length) return;
+
+            titleElem.css({ opacity: '1', transition: 'none' });
+
+            // ── Mobile Hero Background (CSS Variable) ──
+            var bgUrl = '';
+            if (movie.backdrop_path) {
+                bgUrl = Lampa.TMDB.image('t/p/original' + movie.backdrop_path);
+            } else if (movie.poster_path) {
+                bgUrl = Lampa.TMDB.image('t/p/w780' + movie.poster_path);
+            } else if (movie.img) {
+                bgUrl = movie.img;
+            } else {
+                var fallbackImg = render.find('.full-start-new__left img, .full-start__left img');
+                if (fallbackImg.length) bgUrl = fallbackImg.attr('src');
             }
 
-            var fallbackText = titleEl.dataset.nfxOriginalTitle || titleEl.textContent || '';
-            var titleText = getMovieTitle(movie, fallbackText);
-            if (!titleText) continue;
+            if (bgUrl && domTitle) {
+                render[0].style.setProperty('--nfx-mobile-bg', 'url(' + bgUrl + ')');
+            }
 
-            if (!titleEl.dataset.nfxOriginalHtml) titleEl.dataset.nfxOriginalHtml = titleEl.innerHTML;
-            if (!titleEl.dataset.nfxOriginalTitle) titleEl.dataset.nfxOriginalTitle = cleanTitle(titleEl.textContent || titleText);
+            var lang = LogoEngine._getLang();
+            var cacheKey = LogoEngine._key(type, movie.id, lang);
+            var cached = LogoEngine._getCached(cacheKey);
 
-            var fallbackLogo = buildTextLogoDataUrl(titleText);
-            var initialLogoUrl = directLogoUrl || fallbackLogo;
-
-            titleEl.classList.add('nfx-title--with-logo');
-            titleEl.setAttribute('aria-label', titleText);
-            titleEl.dataset.nfxMovieKey = movieKey || '';
-            titleEl.innerHTML = '';
-
-            var holder = document.createElement('div');
-            holder.className = 'nfx-full-logo-holder';
-
-            var logoImg = document.createElement('img');
-            logoImg.className = 'nfx-full-logo';
-            logoImg.alt = titleText;
-            logoImg.loading = 'eager';
-            logoImg.decoding = 'async';
-            logoImg.referrerPolicy = 'no-referrer';
-            logoImg.dataset.fallbackLogo = fallbackLogo;
-            logoImg.dataset.nfxMovieKey = movieKey || '';
-            logoImg.onerror = function () {
-                this.onerror = null;
-                this.src = this.dataset.fallbackLogo || buildTextLogoDataUrl(this.alt || 'Movie');
-            };
-            logoImg.src = initialLogoUrl;
-
-            holder.appendChild(logoImg);
-            titleEl.appendChild(holder);
-            pendingTitles.push(titleEl);
-        }
-
-        if (shouldFetchTmdbLogo && movie && movie.id) {
-            resolveLogoViaTmdb(movie, function (tmdbLogoUrl) {
-                if (!tmdbLogoUrl) return;
-                if (movieKey && lastFullMovieKey && movieKey !== lastFullMovieKey) return;
-
-                for (var k = 0; k < pendingTitles.length; k++) {
-                    var logoNode = pendingTitles[k].querySelector('.nfx-full-logo');
-                    if (!logoNode) continue;
-                    if (movieKey && logoNode.dataset.nfxMovieKey !== movieKey) continue;
-                    logoNode.src = tmdbLogoUrl;
+            if (cached && cached !== 'none') {
+                var cachedImg = new Image();
+                cachedImg.src = cached;
+                if (cachedImg.complete) {
+                    applyLogoStyles(cachedImg);
+                    titleElem.empty().append(cachedImg);
+                    titleElem.css({ opacity: '1', transition: 'none' });
+                    return;
+                } else {
+                    startLogoAnimation(cached, titleElem, domTitle);
+                    return;
                 }
+            }
+
+            if (cached === 'none') return;
+
+            LogoEngine.resolve(movie, function (logoUrl) {
+                if (logoUrl) startLogoAnimation(logoUrl, titleElem, domTitle);
             });
-        }
-    }
-
-    /* BLOCK: Restore one title node back to default html/text */
-    function restoreOriginalTitle(titleEl) {
-        if (!titleEl || !titleEl.classList) return;
-        if (!titleEl.classList.contains('nfx-title--with-logo')) return;
-
-        var originalHtml = titleEl.dataset.nfxOriginalHtml;
-        titleEl.classList.remove('nfx-title--with-logo');
-        titleEl.removeAttribute('aria-label');
-
-        if (typeof originalHtml === 'string') {
-            titleEl.innerHTML = originalHtml;
-        } else if (titleEl.dataset.nfxOriginalTitle) {
-            titleEl.textContent = titleEl.dataset.nfxOriginalTitle;
-        }
-    }
-
-    /* BLOCK: Restore all transformed title nodes */
-    function restoreAllTitles() {
-        var nodes = document.querySelectorAll('.nfx-title--with-logo');
-        for (var i = 0; i < nodes.length; i++) restoreOriginalTitle(nodes[i]);
-    }
-
-    /* BLOCK: Central router for newly added DOM nodes */
-    function scanNode(node) {
-        if (!node || node.nodeType !== 1) return;
-
-        if (node.classList.contains('card')) processCard(node);
-        if (node.classList.contains('items-line')) enableSmoothRowScroll(node);
-        if (node.classList.contains('items-line') || isSectionTitleElement(node)) ensureSectionTitlesAboveCards(node);
-        if (node.classList.contains('menu') || node.classList.contains('menu__list') || node.classList.contains('menu__item')) {
-            ensureMenuSubsectionsVisible(node);
-        }
-
-        if (node.classList.contains('full-start-new__title') || node.classList.contains('full-start__title')) {
-            applyFullCardLogo(lastFullMovie);
-        }
-
-        var cards = node.querySelectorAll('.card');
-        for (var i = 0; i < cards.length; i++) processCard(cards[i]);
-
-        var rows = node.querySelectorAll('.items-line');
-        for (var j = 0; j < rows.length; j++) {
-            enableSmoothRowScroll(rows[j]);
-            ensureSectionTitlesAboveCards(rows[j]);
-        }
-
-        if (node.querySelector('.menu__item')) ensureMenuSubsectionsVisible(node);
-        if (node.querySelector(SECTION_TITLE_SELECTORS) || node.querySelector('.items-line')) ensureSectionTitlesAboveCards(node);
-        if (node.querySelector('.full-start-new__title, .full-start__title')) applyFullCardLogo(lastFullMovie);
-    }
-
-    /* BLOCK: Global MutationObserver bootstrap */
-    function startObserver() {
-        if (domObserver || !document.body) return;
-
-        domObserver = new MutationObserver(function (mutations) {
-            for (var i = 0; i < mutations.length; i++) {
-                var added = mutations[i].addedNodes;
-                for (var j = 0; j < added.length; j++) scanNode(added[j]);
-            }
-        });
-
-        domObserver.observe(document.body, { childList: true, subtree: true });
-        scanNode(document.body);
-    }
-
-    /* BLOCK: Listen full-card events and re-apply logo at safe delays */
-    function bindFullListener() {
-        if (window.__netflix_full_listener_bound) return;
-        window.__netflix_full_listener_bound = true;
-
-        if (!Lampa.Listener || !Lampa.Listener.follow) return;
-
-        Lampa.Listener.follow('full', function (event) {
-            if (!settings.enabled) return;
-            if (event && event.type && event.type !== 'complite') return;
-
-            if (event && event.data && event.data.movie) {
-                lastFullMovie = event.data.movie;
-                lastFullMovieKey = getMovieKey(lastFullMovie);
-            }
-            var delays = [0, 120, 350, 700];
-
-            for (var i = 0; i < delays.length; i++) {
-                (function (delay) {
-                    setTimeout(function () {
-                        applyFullCardLogo(lastFullMovie);
-                    }, delay);
-                })(delays[i]);
-            }
         });
     }
 
-    /* BLOCK: Force re-run card processing for current DOM */
-    function refreshCards() {
-        var cards = document.querySelectorAll('.card');
-        for (var i = 0; i < cards.length; i++) {
-            delete cards[i].dataset.nfxProcessed;
-            processCard(cards[i]);
+
+    // ─────────────────────────────────────────────────────────────────
+    //  SECTION 4 — CARD EDGE TAGGER  (MutationObserver)
+    // ─────────────────────────────────────────────────────────────────
+
+    function initCardProcessor() {
+        if (window.__nfx_cards_bound) return;
+        window.__nfx_cards_bound = true;
+
+        // ── Suppress auto-focus scaling until user interacts ──
+        function enableInteraction() {
+            document.body.classList.add('nfx-user-interacted');
+            document.removeEventListener('keydown', enableInteraction);
+            document.removeEventListener('pointerdown', enableInteraction);
+            document.removeEventListener('mousedown', enableInteraction);
         }
+        document.addEventListener('keydown', enableInteraction, { once: true });
+        document.addEventListener('pointerdown', enableInteraction, { once: true });
+        document.addEventListener('mousedown', enableInteraction, { once: true });
+
+        function tagEdges() {
+            var rows = document.querySelectorAll('.scroll__body');
+            for (var r = 0; r < rows.length; r++) {
+                var cards = rows[r].querySelectorAll('.card');
+                if (!cards.length) continue;
+                for (var c = 0; c < cards.length; c++) {
+                    cards[c].removeAttribute('data-nfx-edge');
+                    cards[c].removeAttribute('data-nfx-single');
+                }
+                if (cards.length === 1) {
+                    cards[0].setAttribute('data-nfx-single', 'true');
+                } else {
+                    cards[0].setAttribute('data-nfx-edge', 'first');
+                    cards[cards.length - 1].setAttribute('data-nfx-edge', 'last');
+                }
+            }
+        }
+
+        // ── Dynamic rating badge colors ──
+        function colorizeRatings() {
+            var badges = document.querySelectorAll('.card__vote');
+            for (var i = 0; i < badges.length; i++) {
+                var el = badges[i];
+                if (el.getAttribute('data-nfx-colored')) continue;
+                var text = (el.textContent || el.innerText || '').replace(',', '.').trim();
+                var val = parseFloat(text);
+                if (isNaN(val)) continue;
+                var color;
+                if (val >= 7.5) color = '#2ecc71'; // green
+                else if (val >= 6.5) color = '#f1c40f'; // yellow
+                else if (val >= 5.0) color = '#e67e22'; // orange
+                else color = 'var(--nfx-accent)'; // red
+                el.style.setProperty('background', color, 'important');
+                el.setAttribute('data-nfx-colored', '1');
+            }
+        }
+
+        var timer = null;
+        var obs = new MutationObserver(function () {
+            clearTimeout(timer);
+            timer = setTimeout(function () {
+                tagEdges();
+                colorizeRatings();
+            }, 80);
+        });
+        obs.observe(document.body, { childList: true, subtree: true });
+        tagEdges();
+        colorizeRatings();
     }
 
-    /* 3. CSS INJECTION
-     * CUSTOMIZE: основний блок візуального кастому.
-     * Першим ділом дивіться :root змінні і секції нижче.
-     */
-    function injectStyles() {
-        var old = document.getElementById('netflix_premium_styles');
+
+    // ─────────────────────────────────────────────────────────────────
+    //  SECTION 5 — CSS  (template literal — zero-gradient minimalist)
+    // ─────────────────────────────────────────────────────────────────
+
+    function injectCSS() {
+        var old = document.getElementById('nfx-premium-v8');
         if (old) old.remove();
 
-        if (!settings.enabled) {
-            restoreAllTitles();
-            return;
+        var accent = Lampa.Storage.get('nfx_accent_color', '#e50914');
+        var fontFam = Lampa.Storage.get('nfx_font_family', 'Montserrat');
+        var fontSb = Lampa.Storage.get('nfx_font_size_sidebar', '1.1em');
+        var scale = Lampa.Storage.get('nfx_card_scale', '1.35');
+        var shift = Lampa.Storage.get('nfx_edge_shift', '20px');
+        var logoH = Lampa.Storage.get('nfx_logo_height', '200px');
+        var blur = Lampa.Storage.get('nfx_backdrop_blur', '30px');
+        var sbWidth = Lampa.Storage.get('nfx_sidebar_width', '280px');
+        var sbOpacity = Lampa.Storage.get('nfx_sidebar_opacity', '0.45');
+
+        // AUTO LITE-MODE FOR LOW-END TVS
+        if (isExoticOS) {
+            sbWidth = 'native'; // Let Lampa's native engine handle width to prevent layout breaks
+            sbOpacity = '0.98'; // Force near-solid background because blur is disabled
+            blur = '0px';       // Kill GPU-heavy glass effect completely
         }
 
-        /* CUSTOMIZE: presets висоти карток */
-        var heights = {
-            small: '170px',
-            medium: '220px',
-            large: '272px',
-            xlarge: '340px'
-        };
+        function getBorderColor(val) {
+            if (val === 'accent') return 'var(--nfx-accent)';
+            if (val === 'white') return '#ffffff';
+            if (val === 'black') return '#000000';
+            return 'transparent';
+        }
 
-        var h = heights[settings.cardHeight] || heights.medium;
-        var radius = settings.roundCorners ? '14px' : '4px';
+        var bFocus = getBorderColor(Lampa.Storage.get('nfx_card_border_focus', 'accent'));
+        var bIdle = getBorderColor(Lampa.Storage.get('nfx_card_border_idle', 'transparent'));
+        var cardRad = Lampa.Storage.get('nfx_card_radius', '8px');
+
+        var menuCustomCSS = '';
+        if (sbOpacity !== 'native') {
+            menuCustomCSS += 'background: rgba(10, 13, 18, ' + sbOpacity + ') !important; ';
+        }
+        if (sbWidth !== 'native') {
+            menuCustomCSS += 'min-width: ' + sbWidth + ' !important; ';
+        }
+
+        var menuTextCustomCSS = '';
+        if (fontSb !== 'native') {
+            menuTextCustomCSS += 'font-size: ' + fontSb + ' !important; ';
+        }
+
+        function hexToRgb(h) {
+            var r = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(h);
+            return r ? parseInt(r[1], 16) + ',' + parseInt(r[2], 16) + ',' + parseInt(r[3], 16) : '229, 9, 20';
+        }
+
+        var ratingSet = Lampa.Storage.get('nfx_rating_set', 'no_kp');
+        var ratingCSS = '';
+
+        if (ratingSet === 'no_kp') {
+            ratingCSS = '.rate--kp { display: none !important; }';
+        } else if (ratingSet === 'west') {
+            ratingCSS = '.rate--kp, .rate--cub, .rate--rotten { display: none !important; }';
+        } else if (ratingSet === 'tmdb') {
+            ratingCSS = '.rate--kp, .rate--imdb, .rate--cub, .rate--rotten { display: none !important; }';
+        } else if (ratingSet === 'none') {
+            ratingCSS = '.full-start-new__rate-line, .full-start__rate-line { display: none !important; }';
+        }
+
+        var accentRgb = hexToRgb(accent);
+        var fontImport = '@import url("https://fonts.googleapis.com/css2?family=' + fontFam.replace(/ /g, '+') + ':wght@400;500;600;700;800;900&display=swap");';
 
         var css = `
-            /* ===== BLOCK: THEME TOKENS (GLOBAL) ===== */
-            :root {
-                --nfx-height: ${h};
-                --nfx-width: calc(var(--nfx-height) * 1.7778);
-                --nfx-bg: #090909;
-                --nfx-bg-soft: #171717;
-                --nfx-card-bg: #1a1a1a;
-                --nfx-red: #e50914;
-                --nfx-red-rgb: 229, 9, 20;
-                --nfx-red-deep: #b20710;
-                --nfx-text: #f5f5f1;
-                --nfx-muted: #b9b9b9;
-                --nfx-radius: ${radius};
-                --focus: var(--nfx-red);
-                --focus-rgb: 229, 9, 20;
-                --accent: var(--nfx-red);
-            }
+/* ================================================================
+   Netflix Premium Style v8.0 — UI Customization
+   ================================================================ */
 
-            /* ===== BLOCK: BASE SCROLL ===== */
-            html,
-            body,
-            .scroll,
-            .items,
-            .items-line {
-                scroll-behavior: smooth !important;
-            }
+${fontImport}
 
-            /* ===== BLOCK: GLOBAL BACKGROUND ===== */
-            body {
-                background:
-                    radial-gradient(1200px 520px at 5% -10%, rgba(var(--nfx-red-rgb), 0.16), transparent 62%),
-                    radial-gradient(900px 400px at 90% 0%, rgba(255, 255, 255, 0.04), transparent 65%),
-                    linear-gradient(180deg, #070707 0%, #0b0b0b 30%, #111111 100%) !important;
-                color: var(--nfx-text) !important;
-                font-family: "Netflix Sans", "Helvetica Neue", Helvetica, Arial, sans-serif !important;
-            }
+:root {
+    --nfx-bg: #0a0d12;
+    --nfx-accent: ${accent};
+    --nfx-accent-rgb: ${accentRgb};
+    --nfx-accent-gl: rgba(${accentRgb}, 0.5);
+    --nfx-accent-bg: rgba(${accentRgb}, 0.7);
+    --nfx-text: #f0f0f0;
+    --nfx-font: '${fontFam}', 'Helvetica Neue', Arial, sans-serif;
+    --nfx-card-scale: ${scale};
+    --nfx-shift: 25%;
+    --nfx-edge-nudge: ${shift};
+    --nfx-sb-blur: ${blur};
+    --nfx-duration: 420ms;
+    --nfx-ease: cubic-bezier(0.4, 0, 0.2, 1);
+    --nfx-radius: ${cardRad};
+    --nfx-card-border-focus: ${bFocus};
+    --nfx-card-border-idle: ${bIdle};
+    --nfx-shadow-text: 0 2px 10px rgba(0,0,0,0.8);
+}
 
-            .background__gradient {
-                background: linear-gradient(
-                    to right,
-                    rgba(7, 7, 7, 0.98) 0%,
-                    rgba(7, 7, 7, 0.85) 35%,
-                    rgba(7, 7, 7, 0.45) 62%,
-                    transparent 100%
-                ) !important;
-            }
+body {
+    background-color: var(--nfx-bg) !important;
+    font-family: var(--nfx-font) !important;
+    color: var(--nfx-text) !important;
+}
 
-            /* ===== BLOCK: SECTION HEADERS ===== */
-            .scroll__title,
-            .category-title {
-                padding-left: 4% !important;
-                color: var(--nfx-text) !important;
-                font-size: 1.46em !important;
-                font-weight: 700 !important;
-                letter-spacing: 0.02em !important;
-                margin: 12px 0 8px !important;
-                text-shadow: 0 2px 10px rgba(0, 0, 0, 0.6) !important;
-            }
 
-            .nfx-section-wrap {
-                display: block !important;
-                width: 100% !important;
-            }
+/* ================================================================
+   1) OVERFLOW — prevent clipping of scaled cards
+   ================================================================ */
 
-            .nfx-section-wrap > .nfx-section-title {
-                display: flex !important;
-                align-items: center !important;
-                justify-content: space-between !important;
-                width: 100% !important;
-                box-sizing: border-box !important;
-                padding-left: 4% !important;
-                padding-right: 4% !important;
-                margin-top: 12px !important;
-                margin-bottom: 8px !important;
-            }
+.items-line__body,
+.items-cards,
+.scroll,
+.scroll--horizontal,
+.scroll__content,
+.scroll__body {
+    overflow: visible !important;
+}
 
-            .nfx-section-wrap > .items-line {
-                padding-top: 12px !important;
-            }
+.items-line {
+    overflow: visible !important;
+    position: relative !important;
+    z-index: 1 !important;
+    padding: 45px 0 !important;
+}
 
-            /* ===== BLOCK: HORIZONTAL ROW LAYOUT ===== */
-            .items-line {
-                display: flex !important;
-                flex-direction: row !important;
-                flex-wrap: nowrap !important;
-                gap: 18px !important;
-                overflow-x: auto !important;
-                overflow-y: visible !important;
-                padding: 28px 4% 36px !important;
-                margin-bottom: 0 !important;
-                -webkit-overflow-scrolling: touch !important;
-                scroll-snap-type: x proximity !important;
-                scroll-padding-left: 4% !important;
-                scroll-padding-right: 4% !important;
-                overscroll-behavior-x: contain !important;
-            }
+/* Row with a focused card sits above everything */
+.items-line:has(.card.focus),
+.items-line:has(.card.hover),
+.items-line:has(.card:hover) {
+    z-index: 50 !important;
+}
 
-            .items-line::-webkit-scrollbar {
-                height: 0 !important;
-                width: 0 !important;
-                display: none !important;
-            }
+/* Category titles */
+.items-line__title {
+    font-family: var(--nfx-font) !important;
+    font-weight: 700 !important;
+    font-size: 1.3em !important;
+    color: var(--nfx-text) !important;
+    text-shadow: var(--nfx-shadow-text) !important;
+    padding-left: 4% !important;
+}
 
-            /* ===== BLOCK: CARD VISUAL ===== */
-            .card {
-                flex: 0 0 var(--nfx-width) !important;
-                width: var(--nfx-width) !important;
-                height: var(--nfx-height) !important;
-                margin: 0 !important;
-                overflow: visible !important;
-                background: transparent !important;
-                border-radius: var(--nfx-radius) !important;
-                z-index: 1 !important;
-                scroll-snap-align: start !important;
-                transition: z-index 0s 0.32s !important;
-            }
 
-            .card__view {
-                width: 100% !important;
-                height: 100% !important;
-                padding-bottom: 0 !important;
-                border-radius: var(--nfx-radius) !important;
-                overflow: hidden !important;
-                position: relative !important;
-                background: var(--nfx-card-bg) !important;
-                border: 1px solid rgba(255, 255, 255, 0.08) !important;
-                transition: transform 0.32s cubic-bezier(0.2, 0.85, 0.22, 1),
-                            box-shadow 0.32s ease,
-                            border-color 0.32s ease !important;
-                box-shadow: 0 6px 18px rgba(0, 0, 0, 0.44) !important;
-            }
+/* ================================================================
+   2) CARD BASE — GPU-ready, clean view (NO ghost masks)
+   ================================================================ */
 
-            .card__view::before {
-                content: '' !important;
-                position: absolute !important;
-                left: 0 !important;
-                right: 0 !important;
-                top: 0 !important;
-                height: 42% !important;
-                background: linear-gradient(to bottom, rgba(var(--nfx-red-rgb), 0.16), transparent) !important;
-                opacity: 0 !important;
-                pointer-events: none !important;
-                transition: opacity 0.32s ease !important;
-                z-index: 1 !important;
-            }
+.card {
+    position: relative !important;
+    transition: transform var(--nfx-duration) var(--nfx-ease),
+                z-index 0s !important;
+    z-index: 1 !important;
+    will-change: transform !important;
+    backface-visibility: hidden !important;
+    -webkit-backface-visibility: hidden !important;
+    transform: translate3d(0, 0, 0) !important;
+}
 
-            .card__view::after {
-                content: '' !important;
-                position: absolute !important;
-                inset: 0 !important;
-                background: linear-gradient(to top, rgba(0, 0, 0, 0.92) 0%, rgba(0, 0, 0, 0.28) 48%, transparent 100%) !important;
-                border-radius: var(--nfx-radius) !important;
-                pointer-events: none !important;
-                z-index: 1 !important;
-            }
+.card__view {
+    border-radius: var(--nfx-radius) !important;
+    overflow: visible !important;
+    position: relative !important;
+    background: #16181d !important;
+    border: 3px solid var(--nfx-card-border-idle) !important;
+    transition: border-color var(--nfx-duration) var(--nfx-ease) !important;
+}
 
-            .card__img {
-                width: 100% !important;
-                height: 100% !important;
-                object-fit: cover !important;
-                transform: scale(1.01) !important;
-                transition: transform 0.5s ease !important;
-            }
+/* Hardware-accelerated Glow Layer */
+.card__view::before {
+    content: "" !important;
+    display: block !important;
+    position: absolute !important;
+    top: 0; left: 0; right: 0; bottom: 0;
+    border-radius: inherit !important;
+    /* Draw the heavy shadow once */
+    box-shadow: 0 0 20px var(--nfx-accent-gl), 0 20px 40px rgba(0,0,0,0.6) !important;
+    opacity: 0 !important; /* Hidden by default */
+    z-index: -1 !important; /* Sit behind the poster */
+    pointer-events: none !important;
+    transition: opacity var(--nfx-duration) var(--nfx-ease) !important;
+    will-change: opacity !important;
+}
 
-            .card__title {
-                position: absolute !important;
-                left: 12px !important;
-                right: 12px !important;
-                bottom: 10px !important;
-                z-index: 2 !important;
-                color: #fff !important;
-                font-size: 14px !important;
-                font-weight: 800 !important;
-                text-transform: uppercase !important;
-                letter-spacing: 0.06em !important;
-                line-height: 1.16 !important;
-                text-shadow: 0 2px 12px rgba(0, 0, 0, 0.88) !important;
-                display: -webkit-box !important;
-                -webkit-box-orient: vertical !important;
-                -webkit-line-clamp: 2 !important;
-                overflow: hidden !important;
-            }
+/* ── KILL ALL GHOST MASKS / OVERLAYS (aggressive) ── */
+.card__view::after {
+    display: none !important;
+    content: none !important;
+    background: none !important;
+    background-image: none !important;
+    opacity: 0 !important;
+    width: 0 !important;
+    height: 0 !important;
+    pointer-events: none !important;
+}
 
-            .card.focus .card__view,
-            .card.hover .card__view,
-            .card:hover .card__view {
-                transform: scale(1.12) !important;
-                border-color: rgba(var(--nfx-red-rgb), 0.85) !important;
-                box-shadow: 0 16px 34px rgba(0, 0, 0, 0.72), 0 0 0 2px rgba(var(--nfx-red-rgb), 0.6) !important;
-            }
+.card__view-shadow,
+.card .card__overlay,
+.card .card__gradient,
+.card .card__mask,
+.card .card__blackout {
+    display: none !important;
+    background: none !important;
+    background-image: none !important;
+    opacity: 0 !important;
+}
 
-            .card.focus .card__view::before,
-            .card.hover .card__view::before,
-            .card:hover .card__view::before {
-                opacity: 1 !important;
-            }
+/* Also ensure no filter dimming on poster */
+.card .card__img,
+.card.focus .card__img,
+.card.hover .card__img,
+.card:hover .card__img {
+    filter: none !important;
+    -webkit-filter: none !important;
+}
 
-            .card.focus .card__img,
-            .card.hover .card__img,
-            .card:hover .card__img {
-                transform: scale(1.05) !important;
-            }
+.card__img {
+    width: 100% !important;
+    height: 100% !important;
+    object-fit: cover !important;
+    border-radius: var(--nfx-radius) !important;
+    display: block !important;
+}
 
-            .card.focus,
-            .card.hover,
-            .card:hover {
-                z-index: 120 !important;
-                transition: z-index 0s 0s !important;
-            }
+/* Card title below */
+.card__title {
+    font-family: var(--nfx-font) !important;
+    font-size: 0.85em !important;
+    font-weight: 600 !important;
+    color: var(--nfx-text) !important;
+    padding: 4px 2px 0px !important;
+    line-height: 1.1 !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    text-shadow: 0 1px 4px rgba(0,0,0,0.5) !important;
+}
 
-            .card.focus .card__view::after,
-            .card.hover .card__view::after {
-                box-shadow: 0 0 0 2px rgba(var(--nfx-red-rgb), 0.7), 0 0 24px rgba(var(--nfx-red-rgb), 0.4) !important;
-            }
+/* ── QUALITY BADGE — bottom-left, green, always on top ── */
+.card__quality {
+    display: block !important;
+    position: absolute !important;
+    bottom: 6px !important;
+    left: 6px !important;
+    top: auto !important;
+    right: auto !important;
+    z-index: 20 !important;
+    background: rgba(46, 204, 113, 0.88) !important;
+    color: #fff !important;
+    padding: 2px 8px !important;
+    border-radius: 4px !important;
+    font-size: 0.7em !important;
+    font-weight: 700 !important;
+    font-family: var(--nfx-font) !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.03em !important;
+    line-height: 1.4 !important;
+    pointer-events: none !important;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.5) !important;
+}
 
-            .card__age,
-            .card__vote,
-            .card__quality {
-                display: none !important;
-            }
+/* ── RATING BADGE — bottom-right, "leaf" shape, color set by JS ── */
+.card__vote {
+    display: block !important;
+    position: absolute !important;
+    bottom: 6px !important;
+    right: 6px !important;
+    top: auto !important;
+    left: auto !important;
+    z-index: 20 !important;
+    background: rgba(120, 120, 120, 0.6) !important;
+    color: #fff !important;
+    padding: 2px 8px !important;
+    border-radius: 10px 0 10px 0 !important;
+    font-size: 0.75em !important;
+    font-weight: 800 !important;
+    font-family: var(--nfx-font) !important;
+    line-height: 1.4 !important;
+    pointer-events: none !important;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.5) !important;
+}
 
-            /* ===== BLOCK: PANELS / SURFACES ===== */
-            .menu,
-            .menu__list,
-            .head,
-            .head__split,
-            .settings__content,
-            .settings-input__content,
-            .selectbox__content,
-            .modal__content,
-            .full-start,
-            .full-start-new {
-                background: rgba(15, 15, 15, 0.88) !important;
-                backdrop-filter: blur(7px) !important;
-            }
+.card__age { display: none !important; }
 
-            /* ===== BLOCK: FOCUSABLE ELEMENTS ===== */
-            .menu__item,
-            .settings-folder,
-            .settings-param,
-            .selectbox-item,
-            .full-start__button,
-            .full-descr__tag,
-            .player-panel .button,
-            .simple-button,
-            .custom-online-btn,
-            .custom-torrent-btn,
-            .main2-more-btn,
-            .torrent-item,
-            .files__item,
-            .menu__version {
-                border-radius: 10px !important;
-                border: 1px solid rgba(255, 255, 255, 0.08) !important;
-                transition: transform 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease, border-color 0.2s ease !important;
-            }
 
-            /* ===== BLOCK: LEFT MENU NORMALIZATION ===== */
-            .menu {
-                min-width: 17.8em !important;
-            }
+/* ================================================================
+   3) CARD FOCUS — clean poster + red glow (NO overlays)
+   ================================================================ */
 
-            .menu__list {
-                overflow-y: auto !important;
-                padding-right: 4px !important;
-            }
+/* ── Suppress auto-focus until user interaction ── */
+body:not(.nfx-user-interacted) .card.focus,
+body:not(.nfx-user-interacted) .card.hover {
+    transform: translate3d(0, 0, 0) !important;
+    z-index: 1 !important;
+}
 
-            .menu__item.nfx-menu-item {
-                display: flex !important;
-                align-items: center !important;
-                justify-content: flex-start !important;
-                gap: 0.62em !important;
-                min-height: 2.48em !important;
-                white-space: nowrap !important;
-                padding-left: 0.72em !important;
-                padding-right: 0.92em !important;
-            }
+body:not(.nfx-user-interacted) .card.focus .card__view,
+body:not(.nfx-user-interacted) .card.hover .card__view {
+    border-color: var(--nfx-card-border-idle) !important;
+}
 
-            .menu__item.nfx-menu-item .nfx-menu-primary-label {
-                display: block !important;
-                opacity: 1 !important;
-                visibility: visible !important;
-                width: auto !important;
-                max-width: none !important;
-                font-size: 1em !important;
-                font-weight: 600 !important;
-                letter-spacing: 0.02em !important;
-                overflow: hidden !important;
-                text-overflow: ellipsis !important;
-                color: #f3f3f3 !important;
-            }
+body:not(.nfx-user-interacted) .card.focus .card__view::before,
+body:not(.nfx-user-interacted) .card.hover .card__view::before {
+    opacity: 0 !important;
+}
 
-            .menu__item.nfx-menu-item .menu__item-name,
-            .menu__item.nfx-menu-item .menu__item-text,
-            .menu__item.nfx-menu-item .menu__item-title,
-            .menu__item.nfx-menu-item .menu__item-label,
-            .menu__item.nfx-menu-item .menu__item-value,
-            .menu__item.nfx-menu-item .nfx-menu-secondary {
-                display: none !important;
-                opacity: 0 !important;
-                visibility: hidden !important;
-                width: 0 !important;
-                max-width: 0 !important;
-            }
+body:not(.nfx-user-interacted) .card.focus ~ .card,
+body:not(.nfx-user-interacted) .card.hover ~ .card {
+    transform: translate3d(0, 0, 0) !important;
+}
 
-            .menu__item.nfx-menu-item .menu__item-icon {
-                flex: 0 0 auto !important;
-            }
+/* All cards: center origin, uniform easing */
+.card {
+    transform-origin: center center !important;
+}
 
-            .menu__item.focus,
-            .menu__item.hover,
-            .menu__item.traverse,
-            .settings-folder.focus,
-            .settings-param.focus,
-            .selectbox-item.focus,
-            .full-start__button.focus,
-            .full-descr__tag.focus,
-            .player-panel .button.focus,
-            .simple-button.focus,
-            .custom-online-btn.focus,
-            .custom-torrent-btn.focus,
-            .main2-more-btn.focus,
-            .button.focus,
-            .menu__version.focus,
-            .torrent-item.focus,
-            .files__item.focus {
-                background: linear-gradient(92deg, rgba(var(--nfx-red-rgb), 0.96), var(--nfx-red-deep)) !important;
-                color: #fff !important;
-                border-color: rgba(var(--nfx-red-rgb), 0.95) !important;
-                box-shadow: 0 0 0 1px rgba(var(--nfx-red-rgb), 0.9), 0 10px 24px rgba(var(--nfx-red-rgb), 0.34) !important;
-                transform: translateY(-1px) !important;
-            }
+.card.focus,
+.card.hover,
+.card:hover {
+    z-index: 100 !important;
+    transform: scale3d(var(--nfx-card-scale), var(--nfx-card-scale), 1) !important;
+}
 
-            .menu__item.focus .menu__item-icon,
-            .menu__item.hover .menu__item-icon {
-                color: #fff !important;
-            }
+/* Focused card — subtle red glow + clean shadow */
+.card.focus .card__view,
+.card.hover .card__view,
+.card:hover .card__view {
+    border-color: var(--nfx-card-border-focus) !important;
+}
 
-            .menu__item.focus .nfx-menu-primary-label {
-                color: #fff !important;
-            }
+.card.focus .card__view::before,
+.card.hover .card__view::before,
+.card:hover .card__view::before {
+    opacity: 1 !important;
+}
 
-            .settings-input__input,
-            input[type="text"],
-            input[type="password"] {
-                background: rgba(26, 26, 26, 0.96) !important;
-                border: 1px solid rgba(255, 255, 255, 0.12) !important;
-                color: #fff !important;
-                border-radius: 9px !important;
-            }
+/* ── NEIGHBOR SHIFTING (GPU translate3d) ── */
+.card.focus ~ .card,
+.card.hover ~ .card,
+.card:hover ~ .card {
+    transform: translate3d(var(--nfx-shift), 0, 0) !important;
+    z-index: 1 !important;
+}
 
-            .settings-input__input:focus,
-            input[type="text"]:focus,
-            input[type="password"]:focus {
-                border-color: rgba(var(--nfx-red-rgb), 0.95) !important;
-                box-shadow: 0 0 0 2px rgba(var(--nfx-red-rgb), 0.24) !important;
-            }
+/* ── EDGE CARDS: origin + translate3d offset to prevent clipping ── */
 
-            /* ===== BLOCK: FULL CARD LOGO + SUPPORT TEXT ===== */
-            .full-start__title,
-            .full-start-new__title {
-                min-height: clamp(98px, 15vw, 210px) !important;
-                display: flex !important;
-                align-items: flex-end !important;
-                width: min(94vw, 1100px) !important;
-            }
+/* First card: left-origin scale + 20px rightward nudge (no clip) */
+.card[data-nfx-edge="first"].focus,
+.card[data-nfx-edge="first"].hover,
+.card[data-nfx-edge="first"]:hover {
+    transform-origin: left center !important;
+    transform: scale3d(var(--nfx-card-scale), var(--nfx-card-scale), 1)
+               translate3d(var(--nfx-edge-nudge), 0, 0) !important;
+}
 
-            .nfx-title--with-logo {
-                color: transparent !important;
-                text-shadow: none !important;
-                letter-spacing: normal !important;
-                display: block !important;
-                width: 100% !important;
-            }
+/* First card's neighbors: standard shift + extra 20px to compensate */
+.card[data-nfx-edge="first"].focus ~ .card,
+.card[data-nfx-edge="first"].hover ~ .card,
+.card[data-nfx-edge="first"]:hover ~ .card {
+    transform: translate3d(calc(var(--nfx-shift) + var(--nfx-edge-nudge)), 0, 0) !important;
+}
 
-            .nfx-full-logo-holder {
-                width: min(92vw, 980px) !important;
-                max-width: 100% !important;
-                min-height: clamp(92px, 12vw, 190px) !important;
-                display: inline-flex !important;
-                align-items: flex-end !important;
-            }
+/* Last card: right-origin scale + 20px leftward nudge (no clip) */
+.card[data-nfx-edge="last"].focus,
+.card[data-nfx-edge="last"].hover,
+.card[data-nfx-edge="last"]:hover {
+    transform-origin: right center !important;
+    transform: scale3d(var(--nfx-card-scale), var(--nfx-card-scale), 1)
+               translate3d(calc(var(--nfx-edge-nudge) * -1), 0, 0) !important;
+}
 
-            .nfx-full-logo {
-                width: auto !important;
-                max-width: 100% !important;
-                height: clamp(96px, 14.6vw, 230px) !important;
-                max-height: clamp(96px, 14.6vw, 230px) !important;
-                object-fit: contain !important;
-                filter: drop-shadow(0 8px 20px rgba(0, 0, 0, 0.75)) drop-shadow(0 0 16px rgba(var(--nfx-red-rgb), 0.3)) !important;
-            }
+/* Reduce shift for the last card when a non-edge sibling is focused */
+.card.focus ~ .card[data-nfx-edge="last"],
+.card.hover ~ .card[data-nfx-edge="last"],
+.card:hover ~ .card[data-nfx-edge="last"] {
+    transform: translate3d(calc(var(--nfx-shift) * 0.5), 0, 0) !important;
+}
 
-            .full-start__tagline,
-            .full-start-new__tagline,
-            .ifx-original-title {
-                display: block !important;
-                width: fit-content !important;
-                max-width: min(88vw, 900px) !important;
-                margin-top: 12px !important;
-                padding: 10px 14px !important;
-                border-left: 2px solid rgba(var(--nfx-red-rgb), 0.64) !important;
-                border-radius: 8px !important;
-                background: linear-gradient(90deg, rgba(12, 12, 12, 0.82), rgba(12, 12, 12, 0.46)) !important;
-                color: rgba(245, 245, 245, 0.78) !important;
-                font-size: clamp(15px, 1.2vw, 24px) !important;
-                font-weight: 500 !important;
-                line-height: 1.34 !important;
-                letter-spacing: 0.01em !important;
-                text-shadow: 0 1px 3px rgba(0, 0, 0, 0.35) !important;
-                backdrop-filter: blur(4px) !important;
-            }
+/* ── SINGLE CARD: use left-origin (no clip) but NO shift ── */
+.card[data-nfx-single="true"].focus,
+.card[data-nfx-single="true"].hover,
+.card[data-nfx-single="true"]:hover {
+    transform-origin: left center !important;
+    transform: scale3d(var(--nfx-card-scale), var(--nfx-card-scale), 1) !important;
+}
 
-            .full-start__head,
-            .full-start-new__head {
-                opacity: 0.78 !important;
-                margin-bottom: 6px !important;
-            }
 
-            ::selection {
-                background: rgba(var(--nfx-red-rgb), 0.38) !important;
-            }
+/* ================================================================
+   4) HERO — FULLSCREEN BACKDROP, ZERO OVERLAYS
+   ================================================================ */
 
-            ::-webkit-scrollbar {
-                width: 8px !important;
-                height: 8px !important;
-            }
+/* ── Backdrop: 100% fullscreen, no mask, no margins ── */
+/* ── Backdrop: 100% fullscreen, no mask, no margins ── */
+.full-start-new, 
+.full-start {
+    position: relative !important;
+    overflow: hidden !important;
+    margin: 0 !important;
+    padding: 0 !important;
+}
 
-            ::-webkit-scrollbar-track {
-                background: #111 !important;
-            }
+/* Force the background image to stretch up and cover the empty padding space */
+.full-start-new .full-start-new__background,
+.full-start-new .full-start__background,
+.full-start__background {
+    position: absolute !important;
+    top: -6em !important; /* Break out of the container upwards */
+    left: 0 !important;
+    width: 100% !important;
+    height: calc(100% + 6em) !important; /* Compensate for the pull-up */
+    margin: 0 !important; padding: 0 !important;
+    mask-image: none !important; -webkit-mask-image: none !important;
+}
 
-            ::-webkit-scrollbar-thumb {
-                background: #2c2c2c !important;
-                border-radius: 8px !important;
-            }
+.full-start-new .full-start-new__background img,
+.full-start-new .full-start__background img,
+.full-start__background img {
+    width: 100% !important;
+    height: 100% !important;
+    object-fit: cover !important;
+    filter: none !important;
+}
 
-            ::-webkit-scrollbar-thumb:hover {
-                background: var(--nfx-red) !important;
-            }
-        `;
+/* ── Kill ALL overlays, gradients, masks ── */
+.full-start-new::before,
+.full-start-new::after,
+.full-start::before,
+.full-start::after {
+    display: none !important;
+    content: none !important;
+}
+
+/* All static overlays/gradients are disabled for the dynamic scroll fog */
+.applecation__overlay,
+.application__overlay,
+.full-start__background.applecation__overlay {
+    display: none !important;
+}
+
+.full-start-new__gradient,
+.full-start__gradient,
+.full-start-new__mask,
+.full-start__mask {
+    display: none !important;
+    background: none !important;
+}
+
+/* ── Kill ALL rectangular masks behind logo / title / content ── */
+.full-start-new__title,
+.full-start__title,
+.applecation__logo,
+.applecation__left,
+.applecation__right,
+.applecation__content-wrapper,
+.applecation__meta,
+.applecation__ratings,
+.full-start-new__head,
+.full-start__head,
+.full-start-new__details,
+.full-start__details {
+    background: none !important;
+    background-color: transparent !important;
+    background-image: none !important;
+    box-shadow: none !important;
+}
+
+/* Kill pseudo-elements on title / logo containers */
+.full-start-new__title::before,
+.full-start-new__title::after,
+.full-start__title::before,
+.full-start__title::after,
+.applecation__logo::before,
+.applecation__logo::after,
+.applecation__left::before,
+.applecation__left::after,
+.applecation__content-wrapper::before,
+.applecation__content-wrapper::after,
+.full-start-new__right::before,
+.full-start-new__right::after,
+.full-start__right::before,
+.full-start__right::after,
+.full-start-new__body::before,
+.full-start-new__body::after,
+.full-start__body::before,
+.full-start__body::after {
+    display: none !important;
+    content: none !important;
+    background: none !important;
+}
+
+/* ── DYNAMIC SCROLL FOG LAYER ── */
+.full-start-new::before, .full-start::before {
+    content: "" !important; display: block !important; position: absolute !important;
+    top: -6em !important; /* Match breakout */
+    left: 0 !important; right: 0 !important; bottom: 0 !important;
+    height: calc(100% + 6em) !important; /* Match breakout */
+    background: linear-gradient(to top, var(--nfx-bg) 0%, rgba(10,13,18,0.85) 35%, transparent 80%) !important;
+    opacity: var(--nfx-fog-level, 0.15) !important; z-index: 1 !important; pointer-events: none !important; transition: opacity 0.1s linear !important;
+}
+
+/* ── HIDE REACTIONS (Pink zone) ── */
+.full-start-new__reactions,
+.full-start__reactions {
+    display: none !important;
+    height: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: hidden !important;
+}
+
+/* ── Content: left-aligned, bottom-weighted ── */
+.full-start-new__body, .full-start__body {
+    position: relative !important; z-index: 2 !important; padding-left: 5% !important;
+    display: flex !important; align-items: flex-end !important;
+    min-height: 80vh !important;
+    padding-top: 6em !important; /* Protect logo from overlapping top header icons */
+    padding-bottom: 2em !important; background: none !important;
+}
+
+.full-start-new__right,
+.full-start__right {
+    position: relative !important;
+    z-index: 3 !important;
+    max-width: 650px !important;
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: flex-start !important;
+    justify-content: flex-end !important;
+    gap: 0 !important;
+    background: none !important;
+}
+
+/* Hide default poster — full-bleed backdrop instead */
+.full-start-new__left,
+.full-start__left {
+    display: none !important;
+}
+
+/* ── Hero Title / Logo — NO background, only text-shadow ── */
+.full-start-new__title,
+.full-start__title {
+    font-family: var(--nfx-font) !important;
+    font-weight: 800 !important;
+    font-size: 2.6em !important;
+    line-height: 1.08 !important;
+    color: #fff !important;
+    text-shadow: 0 2px 10px rgba(0,0,0,0.7),
+                 0 6px 24px rgba(0,0,0,0.8) !important;
+    margin-bottom: 8px !important;
+    background: none !important;
+    background-color: transparent !important;
+    box-shadow: none !important;
+    max-width: 100% !important;
+}
+
+/* Logo images: Clean look, no drop-shadows or rectangular masks */
+.full-start-new__title img,
+.full-start__title img,
+.applecation__logo img,
+.new-interface-full-logo {
+    filter: none !important;
+    background: none !important;
+    box-shadow: none !important;
+    max-width: 100% !important;
+}
+
+/* ── Compact Metadata Block (moved from blue → pink zone) ── */
+
+/* Head line (year, country) */
+.full-start-new__head,
+.full-start__head {
+    font-family: var(--nfx-font) !important;
+    font-weight: 500 !important;
+    font-size: 0.85em !important;
+    line-height: 1.3 !important;
+    color: rgba(255,255,255,0.75) !important;
+    text-shadow: 0 2px 4px rgba(0,0,0,0.5) !important;
+    margin: 0 0 2px 0 !important;
+}
+
+/* Tagline (quote) */
+.full-start-new__tagline,
+.full-start__tagline {
+    font-family: var(--nfx-font) !important;
+    font-weight: 500 !important;
+    font-style: italic !important;
+    font-size: 0.88em !important;
+    line-height: 1.3 !important;
+    color: rgba(255,255,255,0.65) !important;
+    text-shadow: 0 2px 4px rgba(0,0,0,0.5) !important;
+    margin: 0 0 4px 0 !important;
+    padding: 0 !important;
+}
+
+/* Ratings (TMDB / KP) */
+${ratingCSS}
+.full-start-new__rate-line,
+.full-start__rate-line {
+    font-family: var(--nfx-font) !important;
+    font-weight: 500 !important;
+    font-size: 0.82em !important;
+    line-height: 1.3 !important;
+    text-shadow: 0 2px 4px rgba(0,0,0,0.5) !important;
+    margin: 0 0 2px 0 !important;
+}
+
+/* Details (genres, quality, etc.) */
+.full-start-new__details,
+.full-start__details {
+    font-family: var(--nfx-font) !important;
+    font-weight: 500 !important;
+    font-size: 0.82em !important;
+    line-height: 1.3 !important;
+    color: rgba(255,255,255,0.72) !important;
+    text-shadow: 0 2px 4px rgba(0,0,0,0.5) !important;
+    margin: 0 0 2px 0 !important;
+}
+
+/* Description text */
+.full-start-new__text,
+.full-start__text,
+.full-start-new__description,
+.full-start__description {
+    font-family: var(--nfx-font) !important;
+    font-weight: 500 !important;
+    color: rgba(255,255,255,0.72) !important;
+    font-size: 0.85em !important;
+    line-height: 1.4 !important;
+    text-shadow: 0 2px 4px rgba(0,0,0,0.5) !important;
+    max-width: 520px !important;
+    margin: 0 0 6px 0 !important;
+}
+
+/* ── Premium Buttons ── */
+
+/* Inactive buttons: grayish semi-transparent glass */
+.full-start__button,
+.full-start-new__button {
+    font-family: var(--nfx-font) !important;
+    font-weight: 600 !important;
+    border-radius: 8px !important;
+    border: 1px solid rgba(255,255,255,0.1) !important;
+    background: rgba(120, 120, 120, 0.2) !important;
+    backdrop-filter: blur(10px) !important;
+    -webkit-backdrop-filter: blur(10px) !important;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.3) !important;
+    color: rgba(255,255,255,0.8) !important;
+    text-shadow: 0 2px 4px rgba(0,0,0,0.5) !important;
+    transition: background 300ms ease,
+                transform 200ms ease,
+                box-shadow 300ms ease,
+                border-color 300ms ease !important;
+}
+
+/* Active/focused button: tinted red glass, pure white text */
+.full-start__button.focus,
+.full-start__button:hover,
+.full-start-new__button.focus,
+.full-start-new__button:hover {
+    background: var(--nfx-accent-bg) !important;
+    backdrop-filter: blur(12px) !important;
+    -webkit-backdrop-filter: blur(12px) !important;
+    border: 1px solid rgba(255,255,255,0.3) !important;
+    color: #ffffff !important;
+    box-shadow: 0 0 20px var(--nfx-accent-gl),
+               0 8px 28px rgba(0,0,0,0.4) !important;
+    transform: scale(1.04) !important;
+}
+
+/* Ensure button text/icons are always white when focused */
+.full-start__button.focus *,
+.full-start__button:hover *,
+.full-start-new__button.focus *,
+.full-start-new__button:hover * {
+    color: #ffffff !important;
+    fill: #ffffff !important;
+}
+
+
+/* ================================================================
+   5) SIDEBAR — Dark gloss glassmorphism, optimized for long text
+   ================================================================ */
+
+/* Container: dark glossy glass, full-height coverage */
+.menu {
+    ${menuCustomCSS}
+    backdrop-filter: blur(var(--nfx-sb-blur)) saturate(150%) !important;
+    -webkit-backdrop-filter: blur(var(--nfx-sb-blur)) saturate(150%) !important;
+    border-right: 1px solid rgba(255,255,255,0.08) !important;
+    border-left: none !important;
+    border-top: none !important;
+    border-bottom: none !important;
+    overflow-x: hidden !important;
+    overflow-y: auto !important;
+}
+
+.menu__list {
+    background: transparent !important;
+    padding: 0 !important;
+}
+
+/* ── Menu Items: geometry & text fit ── */
+.menu__item[style*="display: none"],
+.menu__item.hide,
+.menu__item.hidden {
+    display: none !important;
+}
+
+.menu__item {
+    border-radius: 0 !important;
+    background: rgba(255, 255, 255, 0.04) !important;
+    border-left: 3px solid transparent !important;
+    padding: 0.55em 1.4em 0.55em 1em !important;
+    margin: 0 !important;
+    transition: border-color 200ms ease,
+                background 200ms ease !important;
+    display: flex;
+    align-items: center !important;
+    gap: 0.7em !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+}
+
+/* ── Active / focused: 3px red line + subtle white glass ── */
+.menu__item.focus,
+.menu__item.hover,
+.menu__item.traverse,
+.menu__item.active {
+    background: rgba(255, 255, 255, 0.1) !important;
+    box-shadow: none !important;
+    border-left: 3px solid var(--nfx-accent) !important;
+}
+
+/* Active text: pure white */
+.menu__item.focus .menu__text,
+.menu__item.hover .menu__text,
+.menu__item.traverse .menu__text,
+.menu__item.active .menu__text {
+    color: #ffffff !important;
+    text-shadow: 0 1px 3px rgba(0,0,0,0.6) !important;
+}
+
+/* Active icons: pure white */
+.menu__item.focus .menu__ico,
+.menu__item.hover .menu__ico,
+.menu__item.traverse .menu__ico,
+.menu__item.active .menu__ico {
+    color: #ffffff !important;
+}
+
+.menu__item.focus .menu__ico svg,
+.menu__item.hover .menu__ico svg,
+.menu__item.traverse .menu__ico svg,
+.menu__item.active .menu__ico svg {
+    fill: #ffffff !important;
+}
+
+/* ── Inactive text: muted with subtle shadow ── */
+.menu__text {
+    font-family: var(--nfx-font) !important;
+    font-weight: 500 !important;
+    ${menuTextCustomCSS}
+    color: rgba(255,255,255,0.5) !important;
+    text-shadow: 0 1px 2px rgba(0,0,0,0.5) !important;
+    transition: color 200ms ease !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    line-height: 1.3 !important;
+}
+
+/* ── Icons: slightly smaller ── */
+.menu__ico {
+    color: rgba(255,255,255,0.5) !important;
+    transition: color 200ms ease !important;
+    flex-shrink: 0 !important;
+    width: 1.1em !important;
+    height: 1.1em !important;
+    display: flex;
+    align-items: center !important;
+    justify-content: center !important;
+}
+
+.menu__ico svg {
+    fill: rgba(255,255,255,0.5) !important;
+    transition: fill 200ms ease !important;
+    width: 1.1em !important;
+    height: 1.1em !important;
+}
+
+/* Make header float perfectly transparent over everything */
+.head {
+    position: absolute !important;
+    top: 0 !important; left: 0 !important; right: 0 !important; width: 100% !important;
+    background: transparent !important; background-color: transparent !important; background-image: none !important;
+    backdrop-filter: none !important; -webkit-backdrop-filter: none !important;
+    border: none !important; box-shadow: none !important; z-index: 100 !important;
+}
+
+.head__actions {
+    text-shadow: 0 2px 4px rgba(0,0,0,0.5) !important;
+}
+
+.head__button,
+.head .button {
+    text-shadow: 0 2px 4px rgba(0,0,0,0.5) !important;
+}
+
+
+/* ================================================================
+   6) SCROLLING & GPU HARDWARE ACCELERATION
+   ================================================================ */
+
+/* Hardware acceleration for ultra smooth scrolling on TV/Mobile */
+.scroll__body, .scroll__content, .items-line__body, .menu__list {
+    will-change: transform, scroll-position !important;
+    -webkit-backface-visibility: hidden !important;
+    backface-visibility: hidden !important;
+    -webkit-perspective: 1000 !important;
+    perspective: 1000 !important;
+    transform-style: preserve-3d !important;
+    scroll-behavior: smooth !important;
+    -webkit-overflow-scrolling: touch !important;
+}
+
+::-webkit-scrollbar {
+    width: 4px !important;
+    height: 4px !important;
+}
+::-webkit-scrollbar-track { background: transparent !important; }
+::-webkit-scrollbar-thumb {
+    background: rgba(255,255,255,0.15) !important;
+    border-radius: 8px !important;
+}
+::-webkit-scrollbar-thumb:hover {
+    background: rgba(255,255,255,0.3) !important;
+}
+
+.scroll__body {
+    scrollbar-width: none !important;
+    -ms-overflow-style: none !important;
+}
+.scroll__body::-webkit-scrollbar { display: none !important; }
+
+
+/* ================================================================
+   7) RESPONSIVE & MULTI-SCREEN
+   ================================================================ */
+
+/* MOBILE HERO RESPONSIVE BACKGROUND (Phones & Tablets: up to 768px) */
+@media (max-width: 768px) {
+    .full-start-new__background, .full-start__background { 
+        display: none !important; 
+    }
+
+    .full-start-new, .full-start {
+        background-image: var(--nfx-mobile-bg) !important;
+        background-size: cover !important;
+        background-position: center top !important;
+        background-repeat: no-repeat !important;
+        /* Pull container up under the header */
+        margin-top: -5.5em !important;
+        /* Push content back down safely */
+        padding-top: 5.5em !important;
+    }
+
+    /* Gradient overlay to make text readable */
+    .applecation__overlay, .application__overlay {
+        display: block !important;
+        background: linear-gradient(to top, var(--nfx-bg) 0%, rgba(10,13,18,0.85) 40%, rgba(10,13,18,0.2) 75%, transparent 100%) !important;
+        background-color: transparent !important;
+        background-image: linear-gradient(to top, var(--nfx-bg) 0%, rgba(10,13,18,0.85) 40%, rgba(10,13,18,0.2) 75%, transparent 100%) !important;
+        box-shadow: none !important;
+        position: absolute !important;
+        top: 0 !important;
+        left: 0 !important;
+        width: 100% !important;
+        height: 100% !important;
+        pointer-events: none !important;
+    }
+}
+
+/* MOBILE (Phones: up to 576px) */
+@media (max-width: 576px) {
+    .full-start-new__title, .full-start__title {
+        font-size: 1.5em !important;
+        margin-bottom: 4px !important;
+    }
+    .full-start-new__title img, .full-start__title img, .applecation__logo img {
+        max-height: 130px !important;
+        max-width: 100% !important;
+    }
+    .full-start-new__right, .full-start__right {
+        max-width: 94vw !important;
+        padding-bottom: 0.5em !important;
+    }
+    .full-start-new__body, .full-start__body {
+        min-height: 75vh !important;
+        padding-left: 2% !important;
+        padding-bottom: 2.5em !important;
+    }
+    :root {
+        --nfx-card-scale: 1.1;
+        --nfx-shift: 8%;
+        --nfx-duration: 300ms;
+    }
+    .items-line {
+        padding: 16px 0 !important;
+    }
+    .menu {
+        min-width: 12em !important;
+    }
+}
+
+/* TABLET & SMALL TV (577px to 1024px) */
+@media (min-width: 577px) and (max-width: 1024px) {
+    .full-start-new__title, .full-start__title {
+        font-size: 1.9em !important;
+    }
+    .full-start-new__right, .full-start__right {
+        max-width: 85vw !important;
+    }
+    :root {
+        --nfx-card-scale: 1.25;
+        --nfx-shift: 18%;
+        --nfx-duration: 350ms;
+    }
+    .items-line {
+        padding: 30px 0 !important;
+    }
+}
+
+/* TV & DESKTOP (1025px and up) */
+/* Default :root uses 1.35x and 25% shift for this range */
+@media (min-width: 1025px) {
+    .full-start-new__title, .full-start__title {
+        font-size: 2.8em !important;
+        margin-bottom: 12px !important;
+    }
+    .full-start-new__right, .full-start__right {
+        max-width: 650px !important;
+    }
+    .items-line {
+        padding: 45px 0 !important;
+    }
+}
+
+/* 4K TV (1920px and up) */
+@media (min-width: 1920px) {
+    .full-start-new__title, .full-start__title {
+        font-size: 3.8em !important;
+    }
+    .full-start-new__right, .full-start__right {
+        max-width: 1000px !important;
+    }
+    :root {
+        --nfx-card-scale: 1.45;
+        --nfx-shift: 30%;
+        --nfx-duration: 450ms;
+    }
+    .items-line {
+        padding: 60px 0 !important;
+    }
+    .card__view {
+        border-radius: calc(var(--nfx-radius) * 1.5) !important;
+    }
+}
+`;
 
         var style = document.createElement('style');
-        style.id = 'netflix_premium_styles';
+        style.id = 'nfx-premium-v8';
         style.textContent = css;
         document.head.appendChild(style);
-
-        console.log('[Netflix Premium] v5.1 styles injected');
     }
 
-    /* BLOCK: Reactive setting updates (called from patched Storage.set) */
-    function applySetting(key) {
-        if (key === 'netflix_premium_enabled') settings.enabled = getBool(key, true);
-        if (key === 'netflix_use_backdrops') settings.useBackdrops = getBool(key, true);
-        if (key === 'netflix_show_logos') settings.showLogos = getBool(key, true);
-        if (key === 'netflix_smooth_scroll') settings.smoothScroll = getBool(key, true);
-        if (key === 'netflix_round_corners') settings.roundCorners = getBool(key, true);
-        if (key === 'netflix_card_height') settings.cardHeight = Lampa.Storage.get('netflix_card_height', 'medium');
 
-        injectStyles();
+    // ─────────────────────────────────────────────────────────────────
+    //  SECTION 6 — SETTINGS & BOOTSTRAP
+    // ─────────────────────────────────────────────────────────────────
 
-        if (!settings.enabled) {
-            restoreAllTitles();
-            return;
+    function initSettings() {
+        if (!window.Lampa || !Lampa.SettingsApi) return;
+
+        var lang = Lampa.Storage.get('language', 'uk');
+        if (lang === 'ua') lang = 'uk';
+
+        var i18n = {
+            'en': {
+                'ps_title': 'Premium Style',
+                'accent_color': 'Accent Color',
+                'red': 'Netflix Red',
+                'green': 'Green',
+                'blue': 'Blue',
+                'orange': 'Orange',
+                'purple': 'Purple',
+                'pink': 'Pink',
+                'font_family': 'Font Family',
+                'sidebar_font_size': 'Sidebar Font Size',
+                'small': 'Small',
+                'normal': 'Normal',
+                'large': 'Large',
+                'xlarge': 'Extra Large',
+                'card_scale': 'Card Focus Scale Factor',
+                'default': 'Default',
+                'edge_shift': 'Edge Shift Nudge',
+                'logo_height': 'Logo Max-Height',
+                'medium': 'Medium',
+                'sb_blur': 'Sidebar Backdrop Blur',
+                'light': 'Light',
+                'premium': 'Premium',
+                'heavy': 'Heavy',
+                'sb_width': 'Sidebar Width',
+                'compact': 'Compact',
+                'wide': 'Wide',
+                'uwide': 'Ultra Wide',
+                'sb_opacity': 'Sidebar Opacity',
+                'clear': 'Almost Clear',
+                'glassy': 'Glassy (Default)',
+                'dark_glass': 'Dark Glass',
+                'solid': 'Solid Dark',
+                'auto': 'Auto (Lampa)',
+                'native_off': 'Native (Turn Off)',
+                'micro': 'Micro',
+                'tiny': 'Tiny',
+                'logo_lang': 'Logo Language Override',
+                'transparent': 'Transparent',
+                'white': 'White',
+                'black': 'Black',
+                'card_border_focus': 'Card Focus Border',
+                'card_border_idle': 'Card Idle Border',
+                'card_radius': 'Card Corner Radius',
+                'square': 'Square (0px)',
+                'small_rad': 'Small (4px)',
+                'med_rad': 'Medium (8px)',
+                'large_rad': 'Large (12px)',
+                'xl_rad': 'Extra Large (16px)',
+                'rating_set': 'Ratings Display',
+                'r_all': 'All Ratings',
+                'r_no_kp': 'Hide Kinopoisk (KP)',
+                'r_west': 'TMDB + IMDB Only',
+                'r_tmdb': 'TMDB Only',
+                'r_none': 'Hide All Ratings'
+            },
+            'uk': {
+                'ps_title': 'Premium Style',
+                'accent_color': 'Акцентний колір',
+                'red': 'Червоний (Netflix)',
+                'green': 'Зелений',
+                'blue': 'Синій',
+                'orange': 'Помаранчевий',
+                'purple': 'Фіолетовий',
+                'pink': 'Рожевий',
+                'font_family': 'Шрифт',
+                'sidebar_font_size': 'Розмір шрифту бокового меню',
+                'small': 'Малий',
+                'normal': 'Звичайний',
+                'large': 'Великий',
+                'xlarge': 'Дуже великий',
+                'card_scale': 'Масштаб картки у фокусі',
+                'default': 'За замовчуванням',
+                'edge_shift': 'Відступ крайньої картки',
+                'logo_height': 'Висота логотипу',
+                'medium': 'Середній',
+                'sb_blur': 'Розмиття бокового меню',
+                'light': 'Легке',
+                'premium': 'Преміум',
+                'heavy': 'Сильне',
+                'sb_width': 'Ширина бокового меню',
+                'compact': 'Компактне',
+                'wide': 'Широке',
+                'uwide': 'Ультра широке',
+                'sb_opacity': 'Прозорість бокового меню',
+                'clear': 'Прозоре',
+                'glassy': 'Скло (Стандарт)',
+                'dark_glass': 'Темне скло',
+                'solid': 'Суцільне темне',
+                'auto': 'Авто (Lampa)',
+                'native_off': 'Оригінальний (Вимкнено)',
+                'micro': 'Мікро',
+                'tiny': 'Крихітний',
+                'logo_lang': 'Мова логотипу (Перевизначення)',
+                'transparent': 'Прозора',
+                'white': 'Біла',
+                'black': 'Чорна',
+                'card_border_focus': 'Обводка картки у фокусі',
+                'card_border_idle': 'Обводка картки у спокої',
+                'card_radius': 'Заокруглення кутів картки',
+                'square': 'Квадратні (0px)',
+                'small_rad': 'Малі (4px)',
+                'med_rad': 'Середні (8px)',
+                'large_rad': 'Великі (12px)',
+                'xl_rad': 'Максимальні (16px)',
+                'rating_set': 'Відображення рейтингів',
+                'r_all': 'Всі рейтинги',
+                'r_no_kp': 'Без Кінопошуку (KP)',
+                'r_west': 'Тільки TMDB + IMDB',
+                'r_tmdb': 'Тільки TMDB',
+                'r_none': 'Приховати всі'
+            },
+            'ru': {
+                'ps_title': 'Premium Style',
+                'accent_color': 'Акцентный цвет',
+                'red': 'Красный (Netflix)',
+                'green': 'Зеленый',
+                'blue': 'Синий',
+                'orange': 'Оранжевый',
+                'purple': 'Фиолетовый',
+                'pink': 'Розовый',
+                'font_family': 'Шрифт',
+                'sidebar_font_size': 'Размер шрифта бокового меню',
+                'small': 'Маленький',
+                'normal': 'Обычный',
+                'large': 'Большой',
+                'xlarge': 'Очень большой',
+                'card_scale': 'Масштаб карточки в фокусе',
+                'default': 'По умолчанию',
+                'edge_shift': 'Отступ крайней карточки',
+                'logo_height': 'Высота логотипа',
+                'medium': 'Средний',
+                'sb_blur': 'Размытие бокового меню',
+                'light': 'Легкое',
+                'premium': 'Премиум',
+                'heavy': 'Сильное',
+                'sb_width': 'Ширина бокового меню',
+                'compact': 'Компактное',
+                'wide': 'Широкое',
+                'uwide': 'Ультра широкое',
+                'sb_opacity': 'Прозрачность бокового меню',
+                'clear': 'Прозрачное',
+                'glassy': 'Стекло (Стандарт)',
+                'dark_glass': 'Темное стекло',
+                'solid': 'Сплошное темное',
+                'auto': 'Авто (Lampa)',
+                'native_off': 'Оригинальный (Выкл)',
+                'micro': 'Микро',
+                'tiny': 'Крошечный',
+                'logo_lang': 'Язык логотипа (Переопределение)',
+                'transparent': 'Прозрачная',
+                'white': 'Белая',
+                'black': 'Черная',
+                'card_border_focus': 'Обводка карточки в фокусе',
+                'card_border_idle': 'Обводка карточки в покое',
+                'card_radius': 'Закругление углов карточки',
+                'square': 'Квадратные (0px)',
+                'small_rad': 'Маленькие (4px)',
+                'med_rad': 'Средние (8px)',
+                'large_rad': 'Большие (12px)',
+                'xl_rad': 'Максимальные (16px)',
+                'rating_set': 'Отображение рейтингов',
+                'r_all': 'Все рейтинги',
+                'r_no_kp': 'Без Кинопоиска (KP)',
+                'r_west': 'Только TMDB + IMDB',
+                'r_tmdb': 'Только TMDB',
+                'r_none': 'Скрыть все'
+            }
+        };
+
+        function t(key) {
+            var dict = i18n[lang] || i18n['en'];
+            return dict[key] || i18n['en'][key] || key;
         }
 
-        refreshCards();
-        ensureSectionTitlesAboveCards(document);
-        ensureMenuSubsectionsVisible(document);
-        applyFullCardLogo(lastFullMovie);
-    }
-
-    /* 4. UI INIT */
-    /* BLOCK: Settings screen component + params */
-    function initSettingsUI() {
-        if (window.__netflix_settings_ready) return;
-        window.__netflix_settings_ready = true;
-
-        var component = 'netflix_premium';
-
         Lampa.SettingsApi.addComponent({
-            component: component,
-            name: Lampa.Lang.translate('netflix_premium_title'),
-            icon: '<svg viewBox="0 0 512 512" fill="currentColor"><path d="M363.3 48h-60v340l-140-340h-76v416h60v-340l140 340h76v-416z"/></svg>'
+            component: 'nfx_premium',
+            name: t('ps_title'),
+            icon: '<svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"></path><path d="M2 12h20"></path></svg>'
         });
 
-        Lampa.SettingsApi.addParam({
-            component: component,
-            param: { name: 'netflix_premium_enabled', type: 'trigger', default: true },
-            field: { name: Lampa.Lang.translate('netflix_enable') }
-        });
+        var prm = [
+            { name: 'nfx_accent_color', type: 'select', values: { '#e50914': t('red'), '#2ecc71': t('green'), '#3498db': t('blue'), '#e67e22': t('orange'), '#9b59b6': t('purple'), '#e91e63': t('pink') }, default: '#e50914', title: t('accent_color') },
+            { name: 'nfx_logo_lang', type: 'select', values: { 'auto': t('auto'), 'uk': 'Ukrainian (UK/UA)', 'ru': 'Russian (RU)', 'en': 'English (EN)' }, default: 'auto', title: t('logo_lang') },
+            { name: 'nfx_font_family', type: 'select', values: { 'Montserrat': 'Montserrat', 'Roboto': 'Roboto', 'Open Sans': 'Open Sans', 'Inter': 'Inter' }, default: 'Montserrat', title: t('font_family') },
+            { name: 'nfx_card_border_focus', type: 'select', values: { 'transparent': t('transparent'), 'accent': t('accent_color'), 'white': t('white') }, default: 'accent', title: t('card_border_focus') },
+            { name: 'nfx_card_border_idle', type: 'select', values: { 'transparent': t('transparent'), 'accent': t('accent_color'), 'white': t('white'), 'black': t('black') }, default: 'transparent', title: t('card_border_idle') },
+            { name: 'nfx_card_radius', type: 'select', values: { '0px': t('square'), '4px': t('small_rad'), '8px': t('med_rad') + ' (' + t('default') + ')', '12px': t('large_rad'), '16px': t('xl_rad') }, default: '8px', title: t('card_radius') },
+            { name: 'nfx_font_size_sidebar', type: 'select', values: { 'native': t('native_off'), '0.9em': t('small'), '1.0em': t('normal'), '1.1em': t('large'), '1.2em': t('xlarge') }, default: '1.1em', title: t('sidebar_font_size') },
+            { name: 'nfx_sidebar_width', type: 'select', values: { 'native': t('native_off'), '220px': t('compact'), '280px': t('normal') + ' (' + t('default') + ')', '340px': t('wide'), '400px': t('uwide') }, default: '280px', title: t('sb_width') },
+            { name: 'nfx_sidebar_opacity', type: 'select', values: { 'native': t('native_off'), '0.1': t('clear'), '0.45': t('glassy'), '0.75': t('dark_glass'), '0.95': t('solid') }, default: '0.45', title: t('sb_opacity') },
+            { name: 'nfx_card_scale', type: 'select', values: { '1.1': '1.10x', '1.25': '1.25x', '1.35': '1.35x (' + t('default') + ')', '1.45': '1.45x' }, default: '1.35', title: t('card_scale') },
+            { name: 'nfx_edge_shift', type: 'select', values: { '10px': '10px', '20px': '20px', '30px': '30px' }, default: '20px', title: t('edge_shift') },
+            { name: 'nfx_logo_height', type: 'select', values: { '80px': t('micro'), '120px': t('tiny'), '150px': t('small'), '200px': t('medium'), '250px': t('large'), '300px': t('xlarge') }, default: '200px', title: t('logo_height') },
+            { name: 'nfx_backdrop_blur', type: 'select', values: { '10px': t('light'), '30px': t('premium'), '50px': t('heavy') }, default: '30px', title: t('sb_blur') },
+            { name: 'nfx_rating_set', type: 'select', values: { 'all': t('r_all'), 'no_kp': t('r_no_kp'), 'west': t('r_west'), 'tmdb': t('r_tmdb'), 'none': t('r_none') }, default: 'no_kp', title: t('rating_set') }
+        ];
 
-        Lampa.SettingsApi.addParam({
-            component: component,
-            param: { name: 'netflix_use_backdrops', type: 'trigger', default: true },
-            field: { name: Lampa.Lang.translate('netflix_use_backdrops') }
-        });
+        prm.forEach(function (p) {
+            var paramConfig = { name: p.name, type: p.type, default: p.default };
+            if (p.values) paramConfig.values = p.values;
 
-        Lampa.SettingsApi.addParam({
-            component: component,
-            param: { name: 'netflix_show_logos', type: 'trigger', default: true },
-            field: { name: Lampa.Lang.translate('netflix_show_logos') }
-        });
-
-        Lampa.SettingsApi.addParam({
-            component: component,
-            param: { name: 'netflix_smooth_scroll', type: 'trigger', default: true },
-            field: { name: Lampa.Lang.translate('netflix_smooth_scroll') }
-        });
-
-        Lampa.SettingsApi.addParam({
-            component: component,
-            param: { name: 'netflix_round_corners', type: 'trigger', default: true },
-            field: { name: Lampa.Lang.translate('netflix_round_corners') }
-        });
-
-        Lampa.SettingsApi.addParam({
-            component: component,
-            param: {
-                name: 'netflix_card_height',
-                type: 'select',
-                values: {
-                    small: 'Small (170px)',
-                    medium: 'Medium (220px)',
-                    large: 'Large (272px)',
-                    xlarge: 'True 4K (340px)'
-                },
-                default: 'medium'
-            },
-            field: { name: Lampa.Lang.translate('netflix_card_height') }
+            Lampa.SettingsApi.addParam({
+                component: 'nfx_premium',
+                param: paramConfig,
+                field: { name: p.title },
+                onChange: function () { injectCSS(); }
+            });
         });
     }
 
-    /* BLOCK: Patch Lampa.Storage.set for instant live apply */
-    function patchStorage() {
-        if (window.__netflix_storage_patched) return;
-        window.__netflix_storage_patched = true;
+    function bootstrap() {
+        if (window.__nfx_premium_v8) return;
+        window.__nfx_premium_v8 = true;
 
-        var originalSet = Lampa.Storage.set;
-        Lampa.Storage.set = function (key, val) {
-            var result = originalSet.apply(this, arguments);
-            if (key.indexOf('netflix_') === 0) applySetting(key, val);
-            return result;
-        };
-    }
+        initSettings();
+        injectCSS();
+        initHeroProcessor();
+        initCardProcessor();
 
-    /* BLOCK: Plugin startup sequence */
-    function init() {
-        if (window.netflix_premium_initialized) return;
-        window.netflix_premium_initialized = true;
 
-        initSettingsUI();
-        patchStorage();
-        injectStyles();
-        startObserver();
-        bindFullListener();
-        refreshCards();
-        ensureSectionTitlesAboveCards(document);
-        ensureMenuSubsectionsVisible(document);
 
-        if (Lampa.Plugin) {
-            /* Реєстрація плагіна в списку Extensions */
-            Lampa.Plugin.display({
-                name: 'Netflix Premium Style',
-                version: '5.1.0',
-                description: 'Cinematic red UI + smooth scroll + logo titles',
-                type: 'style',
-                author: 'Lampac Agent',
-                onstart: init
+        if (window.Lampa && Lampa.Storage && Lampa.Storage.listener) {
+            Lampa.Storage.listener.follow('change', function (e) {
+                if (e.name && e.name.indexOf('nfx_') === 0) {
+                    injectCSS();
+                }
             });
         }
 
-        console.log('[Netflix Premium] v5.1 ready');
+        var isScrolling = false;
+        // Global scroll listener for dynamic fog
+        document.addEventListener('scroll', function (e) {
+            if (e.target && e.target.classList && e.target.classList.contains('scroll__body')) {
+                if (!isScrolling) {
+                    window.requestAnimationFrame(function () {
+                        var st = e.target.scrollTop;
+                        var hero = e.target.querySelector('.full-start-new, .full-start');
+                        if (hero) {
+                            var additionalFog = Math.min(st / 400, 0.8);
+                            hero.style.setProperty('--nfx-fog-level', 0.05 + additionalFog);
+                        }
+                        isScrolling = false;
+                    });
+                    isScrolling = true;
+                }
+            }
+        }, true);
+
+        console.log('[NFX Premium] v8.22 — Ultimate Performance & TV Compatibility');
     }
 
-    /* BLOCK: Safe boot (відкладений старт, якщо Lampa ще не ініціалізована) */
-    if (window.Lampa) init();
-    else {
-        var timer = setInterval(function () {
-            if (typeof Lampa !== 'undefined') {
-                clearInterval(timer);
-                init();
+    if (window.Lampa && Lampa.Listener) {
+        Lampa.Listener.follow('app', function (e) {
+            if (e.type === 'ready') bootstrap();
+        });
+        setTimeout(bootstrap, 800);
+    } else {
+        var poll = setInterval(function () {
+            if (typeof Lampa !== 'undefined' && Lampa.Listener) {
+                clearInterval(poll);
+                Lampa.Listener.follow('app', function (e) {
+                    if (e.type === 'ready') bootstrap();
+                });
+                setTimeout(bootstrap, 800);
             }
         }, 200);
     }
+
 })();
