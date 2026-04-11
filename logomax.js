@@ -6,355 +6,355 @@
         return;
 	}
 
-	var ОТКЛЮЧИТЬ_КЕШ = false;
+	var DISABLE_CACHE = false;
 
-	function запуститьПлагин() {
-		var БЕЗОПАСНАЯ_ЗАДЕРЖКА = 200;
-		var ЗАТУХАНИЕ_ТЕКСТА = 300;
-		var ИЗМЕНЕНИЕ_ВЫСОТЫ = 400;
-		var ПОЯВЛЕНИЕ_ИЗОБРАЖЕНИЯ = 400;
+	function startPlugin() {
+		var SAFE_DELAY = 200;
+		var FADE_OUT_TEXT = 300;
+		var MORPH_HEIGHT = 400;
+		var FADE_IN_IMG = 400;
 
-		var ОТСТУП_СВЕРХУ_EM = 0;
-		var ОТСТУП_СНИЗУ_EM = 0.2;
+		var PADDING_TOP_EM = 0;
+		var PADDING_BOTTOM_EM = 0.2;
 
 		window.logoplugin = true;
 
-		function анимироватьВысоту(элемент, начало, конец, длительность, колбэк) {
-			var времяНачала = null;
-			function шаг(временнаяМетка) {
-				if (!времяНачала) времяНачала = временнаяМетка;
-				var прогресс = временнаяМетка - времяНачала;
-				var процент = Math.min(прогресс / длительность, 1);
-				var плавность = 1 - Math.pow(1 - процент, 3);
-				элемент.style.height = начало + (конец - начало) * плавность + "px";
-				if (прогресс < длительность) {
-					requestAnimationFrame(шаг);
+		function animateHeight(element, start, end, duration, callback) {
+			var startTime = null;
+			function step(timestamp) {
+				if (!startTime) startTime = timestamp;
+				var progress = timestamp - startTime;
+				var percent = Math.min(progress / duration, 1);
+				var ease = 1 - Math.pow(1 - percent, 3);
+				element.style.height = start + (end - start) * ease + "px";
+				if (progress < duration) {
+					requestAnimationFrame(step);
 				} else {
-					if (колбэк) колбэк();
+					if (callback) callback();
 				}
 			}
-			requestAnimationFrame(шаг);
+			requestAnimationFrame(step);
 		}
 
-		function анимироватьПрозрачность(элемент, начало, конец, длительность, колбэк) {
-			var времяНачала = null;
-			function шаг(временнаяМетка) {
-				if (!времяНачала) времяНачала = временнаяМетка;
-				var прогресс = временнаяМетка - времяНачала;
-				var процент = Math.min(прогресс / длительность, 1);
-				var плавность = 1 - Math.pow(1 - процент, 3);
-				элемент.style.opacity = начало + (конец - начало) * плавность;
-				if (прогресс < длительность) {
-					requestAnimationFrame(шаг);
+		function animateOpacity(element, start, end, duration, callback) {
+			var startTime = null;
+			function step(timestamp) {
+				if (!startTime) startTime = timestamp;
+				var progress = timestamp - startTime;
+				var percent = Math.min(progress / duration, 1);
+				var ease = 1 - Math.pow(1 - percent, 3);
+				element.style.opacity = start + (end - start) * ease;
+				if (progress < duration) {
+					requestAnimationFrame(step);
 				} else {
-					if (колбэк) колбэк();
+					if (callback) callback();
 				}
 			}
-			requestAnimationFrame(шаг);
+			requestAnimationFrame(step);
 		}
 
-		function получитьКлючКеша(тип, ид, язык) {
-			return "logo_cache_width_based_v1_" + тип + "_" + ид + "_" + язык;
+		function getCacheKey(type, id, lang) {
+			return "logo_cache_width_based_v1_" + type + "_" + id + "_" + lang;
 		}
 
-		function применитьФинальныеСтили(изображение, контейнер, есть_подзаголовок, высота_текста) {
-			if (контейнер) {
-				контейнер.style.height = "";
-				контейнер.style.overflow = "";
-				контейнер.style.display = "";
-				контейнер.style.transition = "none";
-				контейнер.style.boxSizing = "";
+		function applyFinalStyles(img, container, has_tagline, text_height) {
+			if (container) {
+				container.style.height = "";
+				container.style.overflow = "";
+				container.style.display = "";
+				container.style.transition = "none";
+				container.style.boxSizing = "";
 			}
 
-			var это_мобильный = window.innerWidth < 768;
-			var центрировать_на_мобильном = Lampa.Storage.get("logo_center_mobile", false);
+			var is_mobile = window.innerWidth < 768;
+			var center_mobile = Lampa.Storage.get("logo_center_mobile", false);
 
-			изображение.style.marginTop = "0.2em";
+			img.style.marginTop = "0.2em";
 			
-			if (это_мобильный && центрировать_на_мобильном) {
-				изображение.style.marginLeft = "auto";
-				изображение.style.marginRight = "auto";
+			if (is_mobile && center_mobile) {
+				img.style.marginLeft = "auto";
+				img.style.marginRight = "auto";
 			} else {
-				изображение.style.marginLeft = "0";
-				изображение.style.marginRight = "0";
+				img.style.marginLeft = "0";
+				img.style.marginRight = "0";
 			}
 
-			изображение.style.paddingTop = ОТСТУП_СВЕРХУ_EM + "em";
+			img.style.paddingTop = PADDING_TOP_EM + "em";
 
-			var отступ_снизу = ОТСТУП_СНИЗУ_EM;
-			if (это_мобильный && есть_подзаголовок) отступ_снизу = 0.5;
-			изображение.style.paddingBottom = отступ_снизу + "em";
+			var pb = PADDING_BOTTOM_EM;
+			if (is_mobile && has_tagline) pb = 0.5;
+			img.style.paddingBottom = pb + "em";
 
-			var использовать_высоту_текста = Lampa.Storage.get("logo_use_text_height", false);
+			var use_text_height = Lampa.Storage.get("logo_use_text_height", false);
 
-			if (использовать_высоту_текста && высота_текста) {
-				var коэффициент = parseFloat(Lampa.Storage.get("logo_height_factor", "1.0"));
-				var рассчитанная_высота = высота_текста * коэффициент;
+			if (use_text_height && text_height) {
+				var factor = parseFloat(Lampa.Storage.get("logo_height_factor", "1.0"));
+				var calc_height = text_height * factor;
 
-				if (это_мобильный) {
-					изображение.style.maxHeight = рассчитанная_высота + "px";
-					изображение.style.height = "auto";
-					изображение.style.width = "100%";
+				if (is_mobile) {
+					img.style.maxHeight = calc_height + "px";
+					img.style.height = "auto";
+					img.style.width = "100%";
 				} else {
-					изображение.style.height = рассчитанная_высота + "px";
-					изображение.style.width = "auto";
-					изображение.style.maxHeight = "none";
+					img.style.height = calc_height + "px";
+					img.style.width = "auto";
+					img.style.maxHeight = "none";
 				}
 			} else {
-				var пользовательская_ширина = Lampa.Storage.get("logo_custom_width", "7"); 
-				if (это_мобильный) {
-					изображение.style.width = "100%";
+				var custom_width = Lampa.Storage.get("logo_custom_width", "7"); 
+				if (is_mobile) {
+					img.style.width = "100%";
 				} else {
-					изображение.style.width = пользовательская_ширина + "em";
+					img.style.width = custom_width + "em";
 				}
-				изображение.style.height = "auto";
-				изображение.style.maxHeight = "none";
+				img.style.height = "auto";
+				img.style.maxHeight = "none";
 			}
 
-			изображение.style.maxWidth = "100%";
-			изображение.style.boxSizing = "border-box";
-			изображение.style.display = "block";
-			изображение.style.objectFit = "contain";
+			img.style.maxWidth = "100%";
+			img.style.boxSizing = "border-box";
+			img.style.display = "block";
+			img.style.objectFit = "contain";
 			
-			if (это_мобильный && центрировать_на_мобильном) {
-				изображение.style.objectPosition = "center bottom";
+			if (is_mobile && center_mobile) {
+				img.style.objectPosition = "center bottom";
 			} else {
-				изображение.style.objectPosition = "left bottom";
+				img.style.objectPosition = "left bottom";
 			}
 
-			изображение.style.opacity = "1";
-			изображение.style.transition = "none";
+			img.style.opacity = "1";
+			img.style.transition = "none";
 		}
 		
 
-		Lampa.Listener.follow("full", function (событие) {
-			if (событие.type == "complite" && Lampa.Storage.get("logo_glav") != "1") {
+		Lampa.Listener.follow("full", function (e) {
+			if (e.type == "complite" && Lampa.Storage.get("logo_glav") != "1") {
 				
-				var это_мобильный = window.innerWidth < 768;
-				var выравнивать_сверху = Lampa.Storage.get("logo_align_top", false);
-				var левый_блок_старта = событие.object.activity.render().find(".full-start-new__left");
+				var is_mobile = window.innerWidth < 768;
+				var align_top = Lampa.Storage.get("logo_align_top", false);
+				var full_start_left = e.object.activity.render().find(".full-start-new__left");
 				
-				if (выравнивать_сверху && !это_мобильный && левый_блок_старта.length) {
-					левый_блок_старта.css("align-self", "flex-start");
+				if (align_top && !is_mobile && full_start_left.length) {
+					full_start_left.css("align-self", "flex-start");
 				}
 
-				var данные = событие.data.movie;
-				var тип = данные.name ? "tv" : "movie";
+				var data = e.data.movie;
+				var type = data.name ? "tv" : "movie";
 
-				var элемент_заголовка = событие.object.activity
+				var title_elem = e.object.activity
 					.render()
 					.find(".full-start-new__title");
-				var элемент_шапки = событие.object.activity
+				var head_elem = e.object.activity
 					.render()
 					.find(".full-start-new__head");
-				var элемент_деталей = событие.object.activity
+				var details_elem = e.object.activity
 					.render()
 					.find(".full-start-new__details");
-				var элемент_подзаголовка = событие.object.activity
+				var tagline_elem = e.object.activity
 					.render()
 					.find(".full-start-new__tagline");
-				var есть_подзаголовок =
-					элемент_подзаголовка.length > 0 && элемент_подзаголовка.text().trim() !== "";
-				var дом_заголовок = элемент_заголовка[0];
+				var has_tagline =
+					tagline_elem.length > 0 && tagline_elem.text().trim() !== "";
+				var dom_title = title_elem[0];
 
-				var язык_пользователя = Lampa.Storage.get("logo_lang", "");
-				var целевой_язык = язык_пользователя ? язык_пользователя : Lampa.Storage.get("language");
-				var размер = Lampa.Storage.get("logo_size", "original");
+				var user_lang = Lampa.Storage.get("logo_lang", "");
+				var target_lang = user_lang ? user_lang : Lampa.Storage.get("language");
+				var size = Lampa.Storage.get("logo_size", "original");
 
-				var ключ_кеша = получитьКлючКеша(тип, данные.id, целевой_язык);
+				var cache_key = getCacheKey(type, data.id, target_lang);
 
-				function начатьАнимациюЛоготипа(ссылка_изображения, сохранить_в_кеш) {
-					if (сохранить_в_кеш && !ОТКЛЮЧИТЬ_КЕШ)
-						Lampa.Storage.set(ключ_кеша, ссылка_изображения);
+				function startLogoAnimation(img_url, save_to_cache) {
+					if (save_to_cache && !DISABLE_CACHE)
+						Lampa.Storage.set(cache_key, img_url);
 
-					var изображение = new Image();
-					изображение.src = ссылка_изображения;
+					var img = new Image();
+					img.src = img_url;
 
-					var начальная_высота_текста = 0;
-					if (дом_заголовок)
-						начальная_высота_текста = дом_заголовок.getBoundingClientRect().height;
+					var start_text_height = 0;
+					if (dom_title)
+						start_text_height = dom_title.getBoundingClientRect().height;
 
-					применитьФинальныеСтили(изображение, null, есть_подзаголовок, начальная_высота_текста);
-					изображение.style.opacity = "0";
+					applyFinalStyles(img, null, has_tagline, start_text_height);
+					img.style.opacity = "0";
 
-					var тип_анимации = Lampa.Storage.get("logo_animation_type", "css");
+					var animation_type = Lampa.Storage.get("logo_animation_type", "css");
 
-					изображение.onload = function () {
+					img.onload = function () {
 						setTimeout(function () {
-							if (дом_заголовок)
-								начальная_высота_текста = дом_заголовок.getBoundingClientRect().height;
+							if (dom_title)
+								start_text_height = dom_title.getBoundingClientRect().height;
 
-							if (тип_анимации === "js") {
-								элемент_заголовка.css({ transition: "none" });
-								анимироватьПрозрачность(дом_заголовок, 1, 0, ЗАТУХАНИЕ_ТЕКСТА, function () {
-									элемент_заголовка.empty();
-									элемент_заголовка.append(изображение);
-									элемент_заголовка.css({ opacity: "1", transition: "none" });
+							if (animation_type === "js") {
+								title_elem.css({ transition: "none" });
+								animateOpacity(dom_title, 1, 0, FADE_OUT_TEXT, function () {
+									title_elem.empty();
+									title_elem.append(img);
+									title_elem.css({ opacity: "1", transition: "none" });
 
-									var целевая_высота_контейнера =
-										дом_заголовок.getBoundingClientRect().height;
+									var target_container_height =
+										dom_title.getBoundingClientRect().height;
 
-									дом_заголовок.style.height = начальная_высота_текста + "px";
-									дом_заголовок.style.display = "block";
-									дом_заголовок.style.overflow = "hidden";
-									дом_заголовок.style.boxSizing = "border-box";
+									dom_title.style.height = start_text_height + "px";
+									dom_title.style.display = "block";
+									dom_title.style.overflow = "hidden";
+									dom_title.style.boxSizing = "border-box";
 
-									void дом_заголовок.offsetHeight;
+									void dom_title.offsetHeight;
 
-									дом_заголовок.style.transition = "none";
+									dom_title.style.transition = "none";
 
-									анимироватьВысоту(
-										дом_заголовок,
-										начальная_высота_текста,
-										целевая_высота_контейнера,
-										ИЗМЕНЕНИЕ_ВЫСОТЫ,
+									animateHeight(
+										dom_title,
+										start_text_height,
+										target_container_height,
+										MORPH_HEIGHT,
 										function () {
 											setTimeout(function () {
-												применитьФинальныеСтили(
-													изображение,
-													дом_заголовок,
-													есть_подзаголовок,
-													начальная_высота_текста
+												applyFinalStyles(
+													img,
+													dom_title,
+													has_tagline,
+													start_text_height
 												);
-											}, ПОЯВЛЕНИЕ_ИЗОБРАЖЕНИЯ + 50);
+											}, FADE_IN_IMG + 50);
 										}
 									);
 
 									setTimeout(
 										function () {
-											изображение.style.transition = "none";
-											анимироватьПрозрачность(изображение, 0, 1, ПОЯВЛЕНИЕ_ИЗОБРАЖЕНИЯ);
+											img.style.transition = "none";
+											animateOpacity(img, 0, 1, FADE_IN_IMG);
 										},
-										Math.max(0, ИЗМЕНЕНИЕ_ВЫСОТЫ - 100)
+										Math.max(0, MORPH_HEIGHT - 100)
 									);
 								});
 							} else {
-								элемент_заголовка.css({
-									transition: "opacity " + ЗАТУХАНИЕ_ТЕКСТА / 1000 + "s ease",
+								title_elem.css({
+									transition: "opacity " + FADE_OUT_TEXT / 1000 + "s ease",
 									opacity: "0"
 								});
 
 								setTimeout(function () {
-									элемент_заголовка.empty();
-									элемент_заголовка.append(изображение);
-									элемент_заголовка.css({ opacity: "1", transition: "none" });
+									title_elem.empty();
+									title_elem.append(img);
+									title_elem.css({ opacity: "1", transition: "none" });
 
-									var целевая_высота_контейнера =
-										дом_заголовок.getBoundingClientRect().height;
+									var target_container_height =
+										dom_title.getBoundingClientRect().height;
 
-									дом_заголовок.style.height = начальная_высота_текста + "px";
-									дом_заголовок.style.display = "block";
-									дом_заголовок.style.overflow = "hidden";
-									дом_заголовок.style.boxSizing = "border-box";
+									dom_title.style.height = start_text_height + "px";
+									dom_title.style.display = "block";
+									dom_title.style.overflow = "hidden";
+									dom_title.style.boxSizing = "border-box";
 
-									void дом_заголовок.offsetHeight;
+									void dom_title.offsetHeight;
 
-									дом_заголовок.style.transition =
+									dom_title.style.transition =
 										"height " +
-										ИЗМЕНЕНИЕ_ВЫСОТЫ / 1000 +
+										MORPH_HEIGHT / 1000 +
 										"s cubic-bezier(0.4, 0, 0.2, 1)";
 
 									requestAnimationFrame(function () {
-										дом_заголовок.style.height = целевая_высота_контейнера + "px";
+										dom_title.style.height = target_container_height + "px";
 
 										setTimeout(
 											function () {
-												изображение.style.transition =
-													"opacity " + ПОЯВЛЕНИЕ_ИЗОБРАЖЕНИЯ / 1000 + "s ease";
-												изображение.style.opacity = "1";
+												img.style.transition =
+													"opacity " + FADE_IN_IMG / 1000 + "s ease";
+												img.style.opacity = "1";
 											},
-											Math.max(0, ИЗМЕНЕНИЕ_ВЫСОТЫ - 100)
+											Math.max(0, MORPH_HEIGHT - 100)
 										);
 
 										setTimeout(
 											function () {
-												применитьФинальныеСтили(
-													изображение,
-													дом_заголовок,
-													есть_подзаголовок,
-													начальная_высота_текста
+												applyFinalStyles(
+													img,
+													dom_title,
+													has_tagline,
+													start_text_height
 												);
 											},
-											ИЗМЕНЕНИЕ_ВЫСОТЫ + ПОЯВЛЕНИЕ_ИЗОБРАЖЕНИЯ + 50
+											MORPH_HEIGHT + FADE_IN_IMG + 50
 										);
 									});
-								}, ЗАТУХАНИЕ_ТЕКСТА);
+								}, FADE_OUT_TEXT);
 							}
-						}, БЕЗОПАСНАЯ_ЗАДЕРЖКА);
+						}, SAFE_DELAY);
 					};
 
-					изображение.onerror = function () {
-						if (!ОТКЛЮЧИТЬ_КЕШ) Lampa.Storage.set(ключ_кеша, "none");
-						элемент_заголовка.css({ opacity: "1", transition: "none" });
+					img.onerror = function () {
+						if (!DISABLE_CACHE) Lampa.Storage.set(cache_key, "none");
+						title_elem.css({ opacity: "1", transition: "none" });
 					};
 				}
 
-				var кешированная_ссылка = Lampa.Storage.get(ключ_кеша);
-				if (!ОТКЛЮЧИТЬ_КЕШ && кешированная_ссылка && кешированная_ссылка !== "none") {
-					var изображение_из_кеша = new Image();
-					изображение_из_кеша.src = кешированная_ссылка;
+				var cached_url = Lampa.Storage.get(cache_key);
+				if (!DISABLE_CACHE && cached_url && cached_url !== "none") {
+					var img_cache = new Image();
+					img_cache.src = cached_url;
 
-					if (изображение_из_кеша.complete) {
-						var начальная_высота_текста = 0;
-						if (дом_заголовок)
-							начальная_высота_текста = дом_заголовок.getBoundingClientRect().height;
-						применитьФинальныеСтили(изображение_из_кеша, null, есть_подзаголовок, начальная_высота_текста);
-						элемент_заголовка.empty().append(изображение_из_кеша);
-						элемент_заголовка.css({ opacity: "1", transition: "none" });
+					if (img_cache.complete) {
+						var start_text_height = 0;
+						if (dom_title)
+							start_text_height = dom_title.getBoundingClientRect().height;
+						applyFinalStyles(img_cache, null, has_tagline, start_text_height);
+						title_elem.empty().append(img_cache);
+						title_elem.css({ opacity: "1", transition: "none" });
 						return;
 					} else {
-						начатьАнимациюЛоготипа(кешированная_ссылка, false);
+						startLogoAnimation(cached_url, false);
 						return;
 					}
 				}
 
-				элемент_заголовка.css({ opacity: "1", transition: "none" });
+				title_elem.css({ opacity: "1", transition: "none" });
 
-				if (данные.id != "") {
-					var начальная_высота_текста = 0;
+				if (data.id != "") {
+					var start_text_height = 0;
 					requestAnimationFrame(function () {
-						if (дом_заголовок)
-							начальная_высота_текста = дом_заголовок.getBoundingClientRect().height;
+						if (dom_title)
+							start_text_height = dom_title.getBoundingClientRect().height;
 					});
 
-					var ссылка_api = Lampa.TMDB.api(
-						тип +
+					var url = Lampa.TMDB.api(
+						type +
 							"/" +
-							данные.id +
+							data.id +
 							"/images?api_key=" +
 							Lampa.TMDB.key() +
 							"&include_image_language=" +
-							целевой_язык +
+							target_lang +
 							",en,null"
 					);
 
-					$.get(ссылка_api, function (данные_api) {
-						var итоговый_логотип = null;
-						if (данные_api.logos && данные_api.logos.length > 0) {
-							for (var i = 0; i < данные_api.logos.length; i++) {
-								if (данные_api.logos[i].iso_639_1 == целевой_язык) {
-									итоговый_логотип = данные_api.logos[i].file_path;
+					$.get(url, function (data_api) {
+						var final_logo = null;
+						if (data_api.logos && data_api.logos.length > 0) {
+							for (var i = 0; i < data_api.logos.length; i++) {
+								if (data_api.logos[i].iso_639_1 == target_lang) {
+									final_logo = data_api.logos[i].file_path;
 									break;
 								}
 							}
-							if (!итоговый_логотип) {
-								for (var j = 0; j < данные_api.logos.length; j++) {
-									if (данные_api.logos[j].iso_639_1 == "en") {
-										итоговый_логотип = данные_api.logos[j].file_path;
+							if (!final_logo) {
+								for (var j = 0; j < data_api.logos.length; j++) {
+									if (data_api.logos[j].iso_639_1 == "en") {
+										final_logo = data_api.logos[j].file_path;
 										break;
 									}
 								}
 							}
-							if (!итоговый_логотип) итоговый_логотип = данные_api.logos[0].file_path;
+							if (!final_logo) final_logo = data_api.logos[0].file_path;
 						}
 
-						if (итоговый_логотип) {
-							var ссылка_изображения = Lampa.TMDB.image(
-								"/t/p/" + размер + итоговый_логотип.replace(".svg", ".png")
+						if (final_logo) {
+							var img_url = Lampa.TMDB.image(
+								"/t/p/" + size + final_logo.replace(".svg", ".png")
 							);
-							начатьАнимациюЛоготипа(ссылка_изображения, true);
+							startLogoAnimation(img_url, true);
 						} else {
-							if (!ОТКЛЮЧИТЬ_КЕШ) Lampa.Storage.set(ключ_кеша, "none");
+							if (!DISABLE_CACHE) Lampa.Storage.set(cache_key, "none");
 						}
 					}).fail(function () {});
 				}
@@ -362,9 +362,9 @@
 		});
 	}
 
-	var КОМПОНЕНТ_ЛОГОТИП = "logo_settings_nested";
+	var LOGO_COMPONENT = "logo_settings_nested";
 
-	Lampa.Template.add("settings_" + КОМПОНЕНТ_ЛОГОТИП, "<div></div>");
+	Lampa.Template.add("settings_" + LOGO_COMPONENT, "<div></div>");
 
 	Lampa.SettingsApi.addParam({
 	  component: "interface",
@@ -374,7 +374,7 @@
 		description: "Настройки отображения логотипов"
 	  },
 	  onChange: function () {
-		Lampa.Settings.create(КОМПОНЕНТ_ЛОГОТИП);
+		Lampa.Settings.create(LOGO_COMPONENT);
 		Lampa.Controller.enabled().controller.back = function () {
 		  Lampa.Settings.create("interface");
 		};
@@ -382,18 +382,18 @@
 	});
 
 	Lampa.SettingsApi.addParam({
-		component: КОМПОНЕНТ_ЛОГОТИП,
+		component: LOGO_COMPONENT,
 		param: { name: "logo_back_to_int", type: "static" },
 		field: { name: "Назад", description: "Вернуться в настройки интерфейса" },
-		onRender: function (элемент) {
-			элемент.on("hover:enter", function () {
+		onRender: function (item) {
+			item.on("hover:enter", function () {
 				Lampa.Settings.create("interface");
 			});
 		}
 	});
 
 	Lampa.SettingsApi.addParam({
-		component: КОМПОНЕНТ_ЛОГОТИП,
+		component: LOGO_COMPONENT,
 		param: {
 			name: "logo_glav",
 			type: "select",
@@ -402,12 +402,12 @@
 		},
 		field: {
 			name: "Логотипы вместо названий",
-			description: "Отображать логотипы фильмов вместо текста"
+			description: "Отображает логотипы фильмов вместо текста"
 		}
 	});
 
 	Lampa.SettingsApi.addParam({
-		component: КОМПОНЕНТ_ЛОГОТИП,
+		component: LOGO_COMPONENT,
 		param: {
 			name: "logo_lang",
 			type: "select",
@@ -415,8 +415,8 @@
 				"": "Как в Lampa",
 				ru: "Русский",
 				en: "English",
-				uk: "Українська",
-				be: "Беларуская",
+				uk: "Украинский",
+				be: "Белорусский",
 				kz: "Қазақша",
 				pt: "Português",
 				es: "Español",
@@ -433,7 +433,7 @@
 	});
 
 	Lampa.SettingsApi.addParam({
-		component: КОМПОНЕНТ_ЛОГОТИП,
+		component: LOGO_COMPONENT,
 		param: {
 			name: "logo_size",
 			type: "select",
@@ -452,7 +452,7 @@
 	});
 
 	Lampa.SettingsApi.addParam({
-		component: КОМПОНЕНТ_ЛОГОТИП,
+		component: LOGO_COMPONENT,
 		param: {
 			name: "logo_animation_type",
 			type: "select",
@@ -466,7 +466,7 @@
 	});
 
 	Lampa.SettingsApi.addParam({
-		component: КОМПОНЕНТ_ЛОГОТИП,
+		component: LOGO_COMPONENT,
 		param: { name: "logo_use_text_height", type: "trigger", default: false },
 		field: {
 			name: "Логотип по высоте текста",
@@ -475,7 +475,7 @@
 	});
 
 	Lampa.SettingsApi.addParam({
-		component: КОМПОНЕНТ_ЛОГОТИП,
+		component: LOGO_COMPONENT,
 		param: { name: "logo_center_mobile", type: "trigger", default: false },
 		field: {
 			name: "По центру на телефоне",
@@ -484,7 +484,7 @@
 	});
 
 	Lampa.SettingsApi.addParam({
-		component: КОМПОНЕНТ_ЛОГОТИП,
+		component: LOGO_COMPONENT,
 		param: { name: "logo_align_top", type: "trigger", default: false },
 		field: {
 			name: "Постер всегда сверху",
@@ -493,7 +493,7 @@
 	});
 
 	Lampa.SettingsApi.addParam({
-		component: КОМПОНЕНТ_ЛОГОТИП,
+		component: LOGO_COMPONENT,
 		param: {
 			name: "logo_height_factor",
 			type: "select",
@@ -514,7 +514,7 @@
 	});
 
 	Lampa.SettingsApi.addParam({
-		component: КОМПОНЕНТ_ЛОГОТИП,
+		component: LOGO_COMPONENT,
 		param: {
 			name: "logo_custom_width",
 			type: "select",
@@ -531,27 +531,27 @@
 	});
 	
 	Lampa.SettingsApi.addParam({
-		component: КОМПОНЕНТ_ЛОГОТИП,
+		component: LOGO_COMPONENT,
 		param: { name: "logo_clear_cache", type: "button" },
 		field: {
-			name: "Сбросить кеш логотипов",
-			description: "Нажмите для очистки кеша изображений"
+			name: "Сбросить кэш логотипов",
+			description: "Нажмите для очистки кэша изображений"
 		},
 		onChange: function () {
 			Lampa.Select.show({
-				title: "Сбросить кеш?",
+				title: "Сбросить кэш?",
 				items: [{ title: "Да", confirm: true }, { title: "Нет" }],
-				onSelect: function (выбор) {
-					if (выбор.confirm) {
-						var ключи = [];
+				onSelect: function (a) {
+					if (a.confirm) {
+						var keys = [];
 						for (var i = 0; i < localStorage.length; i++) {
-							var ключ = localStorage.key(i);
-							if (ключ.indexOf("logo_cache_width_based_v1_") !== -1) {
-								ключи.push(ключ);
+							var key = localStorage.key(i);
+							if (key.indexOf("logo_cache_width_based_v1_") !== -1) {
+								keys.push(key);
 							}
 						}
-						ключи.forEach(function (ключ) {
-							localStorage.removeItem(ключ);
+						keys.forEach(function (key) {
+							localStorage.removeItem(key);
 						});
 						window.location.reload();
 					} else {
@@ -565,5 +565,5 @@
 		}
 	});
 
-	if (!window.logoplugin) запуститьПлагин();
+	if (!window.logoplugin) startPlugin();
 })();
