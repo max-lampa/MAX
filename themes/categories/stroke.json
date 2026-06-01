@@ -1,0 +1,32 @@
+[
+  {
+    "title": "Красная",
+    "logo": "https://max-lampa.github.io/MAX/themes/logo/red_stroke.png",
+    "css": "https://max-lampa.github.io/MAX/themes/css/red_stroke.css"
+  },
+  {
+    "title": "Зелёная",
+    "logo": "https://max-lampa.github.io/MAX/themes/logo/green_stroke.png",
+    "css": "https://max-lampa.github.io/MAX/themes/css/green_stroke.css"
+  },
+  {
+    "title": "Фиолетовая",
+    "logo": "https://max-lampa.github.io/MAX/themes/logo/violet_stroke.png",
+    "css": "https://max-lampa.github.io/MAX/themes/css/violet_stroke.css"
+  },
+  {
+    "title": "Синяя",
+    "logo": "https://max-lampa.github.io/MAX/themes/logo/dark_blue_stroke.png",
+    "css": "https://max-lampa.github.io/MAX/themes/css/dark_blue_stroke.css"
+  },
+  {
+    "title": "Оранжевая",
+    "logo": "https://max-lampa.github.io/MAX/themes/logo/orange_stroke.png",
+    "css": "https://max-lampa.github.io/MAX/themes/css/orange_stroke.css"
+  },
+  {
+    "title": "Розовая",
+    "logo": "https://max-lampa.github.io/MAX/themes/logo/pink_stroke.png",
+    "css": "https://max-lampa.github.io/MAX/themes/css/pink_stroke.css"
+  }
+]
