@@ -1,0 +1,62 @@
+[
+  {
+    "title": "Flare",
+    "logo": "https://max-lampa.github.io/MAX/themes/logo/flare.png",
+    "css": "https://max-lampa.github.io/MAX/themes/css/flare.css"
+  },
+  {
+    "title": "Summer",
+    "logo": "https://max-lampa.github.io/MAX/themes/logo/summer.png",
+    "css": "https://max-lampa.github.io/MAX/themes/css/summer.css"
+  },
+  {
+    "title": "Superman",
+    "logo": "https://max-lampa.github.io/MAX/themes/logo/superman.png",
+    "css": "https://max-lampa.github.io/MAX/themes/css/superman.css"
+  },
+  {
+    "title": "Roseanna",
+    "logo": "https://max-lampa.github.io/MAX/themes/logo/roseanna.png",
+    "css": "https://max-lampa.github.io/MAX/themes/css/roseanna.css"
+  },
+  {
+    "title": "Disco",
+    "logo": "https://max-lampa.github.io/MAX/themes/logo/disco.png",
+    "css": "https://max-lampa.github.io/MAX/themes/css/disco.css"
+  },
+  {
+    "title": "Petrol",
+    "logo": "https://max-lampa.github.io/MAX/themes/logo/petrol.png",
+    "css": "https://max-lampa.github.io/MAX/themes/css/petrol.css"
+  },
+  {
+    "title": "Purple Love",
+    "logo": "https://max-lampa.github.io/MAX/themes/logo/purple_love.png",
+    "css": "https://max-lampa.github.io/MAX/themes/css/purple_love.css"
+  },
+  {
+    "title": "Mojito",
+    "logo": "https://max-lampa.github.io/MAX/themes/logo/mojito.png",
+    "css": "https://max-lampa.github.io/MAX/themes/css/mojito.css"
+  },
+  {
+    "title": "Dark Skies",
+    "logo": "https://max-lampa.github.io/MAX/themes/logo/dark_skies.png",
+    "css": "https://max-lampa.github.io/MAX/themes/css/dark_skies.css"
+  },
+  {
+    "title": "Sulphur",
+    "logo": "https://max-lampa.github.io/MAX/themes/logo/sulphur.png",
+    "css": "https://max-lampa.github.io/MAX/themes/css/sulphur.css"
+  },
+  {
+    "title": "Dirty Fog",
+    "logo": "https://max-lampa.github.io/MAX/themes/logo/dirty_fog.png",
+    "css": "https://max-lampa.github.io/MAX/themes/css/dirty_fog.css"
+  },
+  {
+    "title": "Reef",
+    "logo": "https://max-lampa.github.io/MAX/themes/logo/reef.png",
+    "css": "https://max-lampa.github.io/MAX/themes/css/reef.css"
+  }
+]
